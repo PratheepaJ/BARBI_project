@@ -1,0 +1,17 @@
+BARBI_mock_based_on_comparison_paper/*.html
+BARBI_mock_based_on_comparison_paper/*.sbatch
+BARBI_mock_based_on_comparison_paper/Data/
+BARBI_mock_based_on_comparison_paper/Results/
+Result_Report_for_Metagenomic_Data_from_Serial_dilutions_of_Zymo_Mock_Community/
+Zymo_Analysis/Zymo_BARBI_Dada2_assignTaxonomy/Data/
+Zymo_Analysis/Zymo_BARBI_Dada2_assignTaxonomy/Figures/
+Zymo_Analysis/Zymo_BARBI_Dada2_assignTaxonomy/Results/
+Zymo_Analysis/Zymo_BARBI_Dada2_assignTaxonomy/*.html
+Zymo_Analysis/Zymo_BARBI_Uclust_Taxonomy/Data/
+Zymo_Analysis/Zymo_BARBI_Uclust_Taxonomy/Results/
+Zymo_Analysis/Zymo_BARBI_Uclust_Taxonomy/*html
+Zymo_Analysis/Zymo_Dada2_pipeline/Data/
+Zymo_Analysis/Zymo_Dada2_pipeline/Figures/
+Zymo_Analysis/Zymo_Dada2_pipeline/RawSeq/
+Zymo_Analysis/Zymo_Dada2_pipeline/*.html
+Zymo_Analysis/Zymo_Dada2_pipeline/*.sbatch

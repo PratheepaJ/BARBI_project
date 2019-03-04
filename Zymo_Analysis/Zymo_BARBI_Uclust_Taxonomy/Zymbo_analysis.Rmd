@@ -1,0 +1,675 @@
+---
+title: "Zymbo Mock Community Data Analysis (16S rRNA gene amplicon sequencing)"
+author: "Pratheepa Jeganathan, Henry Cheng"
+date: "2/4/2019"
+output: html_document
+---
+
+The Zymbo dataset contains theroretcally 8 diffeerent species but we found around 11 different species. Note that some of these 11 species are not in some diluted samples.
+
+We have 10 negative control samples and serial dilution of a mock microbial community (6-fold diluted 8 samples.) 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+Loading packages
+```{r}
+#library(BARBI)
+library(devtools)
+library(phyloseq)
+library(DESeq2)
+library(dplyr)
+library(tidyr)
+library(R.utils)
+library(BiocParallel)
+library(doParallel)
+library(parallel)
+library(HDInterval)
+library(grid)
+library(xtable)
+library(gtable)
+library(gridExtra)
+library(BiocStyle)
+library(magrittr)
+library(ggplot2)
+sourceDirectory("./R")
+```
+
+
+Set the computational resources
+
+```{r}
+ncores <- as.integer(Sys.getenv("SLURM_NTASKS"))
+if(is.na(ncores)) ncores <- parallel::detectCores()
+```
+
+## Make a phyloseq 
+
+Make an otu table (DADA2)
+```{r}
+# asv.tab <- read.csv("/Users/jpratheepa31/Dropbox/GitHub/BARBI_project/Re__Result_for_Metagenomic_Data_from_Serial_dilutions_of_Zymo_Mock_Community/in1299.190122.zymo/00.AllSamples.Bac16Sv34/Dada2/abundance.table.csv")
+asv.tab <- readr::read_csv("./Data/abundance.table.csv") %>% as.data.frame
+```
+
+```{r}
+asvs <- colnames(asv.tab)
+sam.names <- asv.tab[,1]
+```
+
+
+```{r}
+asv.tab <- select(asv.tab, -seqs)
+rownames(asv.tab) <- sam.names
+class(asv.tab)
+asv.tab <- asv.tab %>% t
+```
+
+Make a sample table
+```{r}
+sam.tab <- data.frame(SubjectID = colnames(asv.tab), SampleID = colnames(asv.tab))
+sam.tab <- mutate(sam.tab, SampleType  = substr(SampleID, 1,8))
+rownames(sam.tab) <- as.character(sam.tab$SampleID)
+
+```
+
+Make taxonomy table
+```{r}
+tax.tab <- read.table("./Data/rep_set_tax_assignments.txt", sep="\t")
+tx.t <- matrix(nrow = nrow(tax.tab),ncol = 7)
+for(i in 1:nrow(tax.tab)){
+  ASV.sp <- strsplit(as.character(tax.tab[i, "V2"]),";")
+  for(j in 1:7){
+    tx.t[i,j] <- ASV.sp[[1]][j]
+  }
+}
+
+rownames(tx.t) <- as.character(tax.tab$V1)
+colnames(tx.t) <- c("Kingdon","Phylum", "Class", "Order", "Family","Genus", "Species")
+```
+
+Make a phyloseq
+```{r}
+ps <- phyloseq(otu_table(asv.tab, taxa_are_rows = TRUE), sample_data(sam.tab), tax_table(tx.t))
+```
+
+##  Create a list of true sequences in each diluted sample
+```{r}
+# true.asvs <- names(sort(asv.tab[,"Standard.Dilution.1.1"], decreasing = TRUE))[1:11]
+seqNature <- readxl::read_excel("./Data/rep_set_tax_assignments_classified.xlsx")
+seqNature <- select(seqNature, 1:3)
+names(seqNature) <- c("ASV","Nature", "Taxanomy")
+seqNature$Nature <- factor(seqNature$Nature)
+if.atleast.one.category <- levels(seqNature$Nature)[-c(1:3)]
+
+trueSeq <- function(sample.name, seqNature, if.atleast.one.category){
+  df.sample.i <- data.frame(ot = otu_table(ps)[, sample.name])
+  names(df.sample.i) <- "ot"
+  df.sample.i <- mutate(df.sample.i, ASV = rownames(df.sample.i))
+  df.sample.i <- left_join(df.sample.i, seqNature, by = "ASV")
+  df.sample.i.true.seq <- filter(df.sample.i, (ot > 0) & (Nature %in% if.atleast.one.category))
+  true.seq.sample.i <- as.character(df.sample.i.true.seq$ASV)
+  return(true.seq.sample.i)
+}
+
+diluted.sample.names <- sample_names(ps)[11:18]
+
+true.seq.all.samples <- lapply(diluted.sample.names, FUN = trueSeq, seqNature = seqNature, if.atleast.one.category = if.atleast.one.category)
+```
+
+
+##  BARBI for Zymbo Data
+
+
+###      Load the phyloseq object
+
+```{r read-phylo}
+ps <- ps
+colSums(otu_table(ps))
+```
+
+
+We have only one block of samples.
+
+```{r adding_blocks}
+blocks <- rep("Set1", nsamples(ps))
+
+sample_data(ps)$block <- blocks
+```
+
+Identify the species that are not present in at least one `SampleType == Standard` sample and removed them from the phyloseq object. Label these species as contaminants. 
+
+```{r filter_taxa}
+ps <- prune_taxa(taxa_sums(ps)>0, ps)
+ps.standard <- subset_samples(ps, SampleType %in% c("Standard"))
+prevTaxaP <- apply(otu_table(ps.standard), 1, function(x){sum(x>0)})
+
+Contaminants1 <- names(prevTaxaP)[prevTaxaP == 0]
+length(Contaminants1)
+ps <- prune_taxa(prevTaxaP>0, ps)
+ps
+```
+
+Specify that the samples are on the columns and species are on the rows of `otu_table`. 
+
+Check the distribution of library depth to see whether there are samples with very small library sizes that should be dropped from the analysis.
+
+```{r filter-samples}
+if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
+totalReads <- colSums(otu_table(ps))
+hist(log(totalReads), yaxs="i", xaxs="i", main="Distribution of total reads per sample", breaks=50)
+```
+
+  
+See a summary of the `Standard` and `Negative` samples in each block. 
+
+```{r summary_stat}
+table(sample_data(ps)$SampleType, sample_data(ps)$block)
+
+```
+
+Do the library size normalization and eyeball
+
+```{r eval=FALSE, include=FALSE}
+ps.to.dq <- phyloseq_to_deseq2(subset_samples(ps, SampleType =="Negative"), design = ~1)
+
+geo.mean <- function(y) {
+        if(all(y == 0)){
+                val <- 0
+        }else{
+                val <- exp(sum(log(y[y > 0]))/length(y))
+        }
+        return(val)
+}
+
+geom.mean.row <- apply(counts(ps.to.dq), 1, FUN = geo.mean)
+
+ps.to.dq <- estimateSizeFactors(ps.to.dq, geoMeans = geom.mean.row)
+
+dq <- DESeq(ps.to.dq, fitType = "local", minReplicatesForReplace= Inf)
+
+library.size.norm <- sizeFactors(dq)
+
+ot.tab <- t(t(otu_table(ps))/library.size.norm)
+
+ps.t <- phyloseq(otu_table(ot.tab,taxa_are_rows = TRUE),sample_data(ps))
+```
+
+
+###      Prepare the phyloseq object for the Bayesian inference
+
+We use Bayesian inference to identify contaminants in each block separately to account for the batch-effects of contamination. 
+
+Thus, split the phyloseq object into multiple phyloseq objects corresponding to each block, and store the phyloseq objects as a list of phyloseq objects, `psByBlock`. 
+
+Select negative control samples from each block and store as a list of phyloseq objects, `psNCbyBlock`. 
+
+Select all species that have a prevalence of zero (i.e., have zero reads) in all negative control samples for each block and store as a list of phyloseq objects, `psallzeroInNC`.
+
+Select all plasma samples from each block and store as a list of phyloseq objects, `psPlByBlock`.
+
+```{r list_of_phyloseq}
+psBlockResult <- psBlockResults(ps, sampleTypeVar = "SampleType", caselevels = c("Standard"), controllevel="Negative", sampleName = "SampleID", blockVar = "block")
+
+psByBlock <- psBlockResult[[1]]
+psNCbyBlock <- psBlockResult[[2]]
+psallzeroInNC <- psBlockResult[[3]]
+psPlByBlock <- psBlockResult[[4]]
+
+saveRDS(psByBlock,"./Results/psByBlock.rds")
+```
+
+##      Estimate the distribution parameters for the instensity of contamination in negative control samples
+
+Estimate the gamma distribution parameters for the intensity of contaminants using the negative control samples for each block. 
+
+
+```{r estimate_Cont_Intensity_ncontrols}
+alphaBetaNegControl <- alphaBetaNegControl(psNCbyBlock = psNCbyBlock, stringent = FALSE)
+```
+
+##      Estimate the distribution parameters for the intensity of contamination in each plasma sample
+
+For each `Standard` sample, estimate the gamma distribution parameters for the intensity of contamination using the scaling property of the gamma distribution.
+
+
+```{r estimate_Cont_Intensity_plasma}
+num_blks <- length(alphaBetaNegControl)
+blks <- seq(1, num_blks) %>% as.list
+
+gammaPrior_all_blks <- lapply(blks, function(x){
+        gammaPrior <- alphaBetaContInPlasma(psPlByBlock = psPlByBlock, psallzeroInNC = psallzeroInNC, blk = x, alphaBetaNegControl = alphaBetaNegControl)
+        return(gammaPrior)
+})
+```
+
+
+##      Sampling from the posterior for the intensity of true signal
+
+For all samples and for all taxa, sample from the posterior for the intensity of true signal using the Metropolis-Hasting MCMC. Specifify the number of iterations in the MCMC using the option `itera`. 
+
+Save the gamma prior for the intensity of contamination and the posterior samples.
+
+The  suggeseted itera is 10,000. 
+
+```{r sampling_post_true_int, eval=FALSE}
+t1 <- proc.time()
+
+post_all_blocks <- lapply(blks,function(x){
+        post_int_all_taxa <- samplingPosterior(psPlByBlock = psPlByBlock,
+                blk = x,
+                gammaPrior_Cont = gammaPrior_all_blks[[x]],
+                itera = 10000,
+                ncores = ncores)
+        return(post_int_all_taxa)
+})
+
+proc.time()-t1
+
+
+gammaPrior_posTrueSing_all_blocks <- list(gammaPrior_all_blks,post_all_blocks)
+
+saveRDS(gammaPrior_posTrueSing_all_blocks, file= "./Results/gammaPrior_posTrueSing_all_blocks.rds")
+```
+
+
+###     Make summaires from the BARBI results.
+
+Choose the number of MCMC to be removed using the option `burnIn`.  It must be less than `itera`.
+
+Choose the coverage probability to construct the highest posterior density interval using the option `cov.pro`.
+
+Taxa are labeled as contaminants if the lower limit of the true signal is greater than the upper limit of the contaminant. 
+
+
+```{r make_tables}
+set.seed(10000)
+itera <- 10000
+burnIn <- 5000
+cov_pro <- .95
+mak_tab <- TRUE # need to change to TRUE if you want to make tables
+#psByBlock <- readRDS("./Results_BARBI_8_28_18/psByBlock.rds")
+num_blks <- length(psByBlock)
+
+gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_all_blocks.rds")
+
+# gammaPrior_posTrueSing_all_blocks is a list that contains first element posterior sampling, second element is the samples in negative control, plasma
+gammaPrior_all_blks <- gammaPrior_posTrueSing_all_blocks[[1]]
+post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]]
+
+
+all_real_taxa_lt <- list()
+
+df_blk <- list()
+
+for(blk in 1:num_blks){
+
+                taxa_post_all_sam <- post_all_blocks[[blk]]
+                gammPrior <- gammaPrior_all_blks[[blk]]
+
+                total_summary_table <- NULL
+
+                all_real_taxa <- list()
+                
+                df <- list()
+
+                for(sam in 1:nsamples(psPlByBlock[[blk]])){
+
+  
+                        taxa_post <- taxa_post_all_sam[[sam]]
+                        acceptance <- list() #  acceptance rate of MC sampling 
+                        exp_post_s <- list()
+                        lower_s <- list() # s true signal
+                        upper_s <- list()
+                        lower_b <- list() # b- contaminat
+                        upper_b <- list()
+                        all_zero_nc <- list()
+                        
+        
+                        for(taxa in 1:length(taxa_post)){
+                                
+                                burnIn  <- burnIn
+                                acceptance[[taxa]]  <-  1-mean(duplicated(taxa_post[[taxa]][-(1:burnIn),]))
+
+                                exp_post_s[[taxa]] <- mean(taxa_post[[taxa]][-(1:burnIn),])
+
+                                hdi_v <- hdi(taxa_post[[taxa]][-(1:burnIn),], credMass = cov_pro)
+                                lower_s[[taxa]] <- round(hdi_v[1], digits = 0)
+                                upper_s[[taxa]] <- round(hdi_v[2], digits = 0)
+                                b_int <- rgamma((itera-burnIn+1), shape = gammPrior[[sam]][[1]][taxa], rate = gammPrior[[sam]][[2]][taxa])
+
+                                hdi_b <- hdi(b_int, credMass = cov_pro)
+                                lower_b[[taxa]] <- round(hdi_b[1], digits = 0)
+                                upper_b[[taxa]] <- round(hdi_b[2], digits = 0)
+
+                                all_zero_nc[[taxa]] <-  gammPrior[[sam]][[5]][taxa]
+                                
+                        }
+
+
+                        df[[sam]] <- data.frame(Species = taxa_names(psPlByBlock[[blk]]),
+                                         xj = as.numeric(gammPrior[[sam]][[3]]),
+                                         l_s = unlist(lower_s),
+                                         u_s = unlist(upper_s),
+                                         l_b = unlist(lower_b),
+                                         u_b = unlist(upper_b),
+                                         all_zero_nc = unlist(all_zero_nc)
+                                         )
+
+                        df[[sam]] <- arrange(filter(df[[sam]], ((l_s > u_b)&(l_s>0))), desc(xj))
+
+
+                        if(dim(df[[sam]])[1]==0){
+                                df[[sam]] <- data.frame(Species="Negative",
+                                                 xj="Negative",
+                                                 l_s="Negative",
+                                                 u_s="Negative",
+                                                 l_b ="Negative",
+                                                 u_b="Negative",
+                                                 all_zero_nc = "Negative")
+                        }
+
+
+                        all_real_taxa[[sam]] <- as.character(df[[sam]]$Species)
+                       
+                }
+
+                all_real_taxa_lt[[blk]] <- all_real_taxa
+                
+                df_blk[[blk]] <- df
+        }
+
+```
+
+Did BARBI identify all true sequences
+```{r}
+performance <- lapply(as.list(c(seq(1,8))), function(x){
+  all(true.seq.all.samples[[x]] %in% as.character(df[[x]]$Species))
+})
+# all(as.character(df[[3]]$ASV) %in% true.seq.all.samples)
+performance
+
+```
+
+number of true sequences found by BARBI in each sample
+```{r}
+#number of not contaminant ASVs found by BARBI in each sample
+lapply(all_real_taxa_lt[[1]], function(y){
+  length(y)
+})
+
+```
+
+sequence has been identified as true signal because there is no reads in negative control samples.
+
+```{r}
+lapply(as.list(c(seq(1,8))), function(x){
+  df[[x]]$Species[which(df[[x]]$all_zero_nc == "Yes")]
+})
+
+```
+
+true sequences (removing contaminants that are not in negative control samples)
+```{r}
+lapply(as.list(c(seq(1,8))), function(x){
+  dim(df[[x]])[1] - length(df[[x]]$Species[which(df[[x]]$all_zero_nc == "Yes")])
+})
+```
+
+True sequences in all samples
+```{r}
+true.seq.all <- lapply(df, function(x){
+  as.character(x$Species)
+})
+
+true.seq.all <- unlist(true.seq.all)
+true.seq.all <- unique(true.seq.all)
+true.seq.all
+```
+
+
+BARBI didn't find the true seq8 (82 reads) in the last diluted sample with .95 probability. 
+
+We can see that seq8 in the last diluted sample is a cross-contaminant because the percentage of _Salmonella enterica_ does not account for nearly 10.1\% as in the theoretical composition. 
+
+```{r}
+seq8.prop <- numeric()
+for(i in 1:8){
+  seq8.prop[i] <- otu_table(ps)[8,(10+i)]/colSums(otu_table(ps))[(10+i)]*100
+}
+seq8.prop
+
+# all.prop.sam8 <- numeric()
+# for(i in c(2:8,11)){
+#   all.prop.sam8[i] <- otu_table(ps)[i,18]/colSums(otu_table(ps))[18]*100
+# }
+# all.prop.sam8
+```
+
+
+
+<!-- However, when reducing the probability to .94, we can find this seq8. -->
+
+<!-- Change the coverage probability to .94 -->
+<!-- ```{r} -->
+<!-- set.seed(10000) -->
+<!-- itera <- 10000 -->
+<!-- burnIn <- 5000 -->
+<!-- cov_pro <- .94 -->
+<!-- mak_tab <- TRUE # need to change to TRUE if you want to make tables -->
+<!-- #psByBlock <- readRDS("./Results_BARBI_8_28_18/psByBlock.rds") -->
+<!-- num_blks <- length(psByBlock) -->
+
+<!-- gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_all_blocks.rds") -->
+
+<!-- # gammaPrior_posTrueSing_all_blocks is a list that contains first element posterior sampling, second element is the samples in negative control, plasma -->
+<!-- gammaPrior_all_blks <- gammaPrior_posTrueSing_all_blocks[[1]] -->
+<!-- post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]] -->
+
+
+<!-- all_real_taxa_lt <- list() -->
+
+<!-- df_blk <- list() -->
+
+<!-- for(blk in 1:num_blks){ -->
+
+<!--                 taxa_post_all_sam <- post_all_blocks[[blk]] -->
+<!--                 gammPrior <- gammaPrior_all_blks[[blk]] -->
+
+<!--                 total_summary_table <- NULL -->
+
+<!--                 all_real_taxa <- list() -->
+
+<!--                 df <- list() -->
+
+<!--                 for(sam in 1:nsamples(psPlByBlock[[blk]])){ -->
+
+
+<!--                         taxa_post <- taxa_post_all_sam[[sam]] -->
+<!--                         acceptance <- list() #  acceptance rate of MC sampling  -->
+<!--                         exp_post_s <- list() -->
+<!--                         lower_s <- list() # s true signal -->
+<!--                         upper_s <- list() -->
+<!--                         lower_b <- list() # b- contaminat -->
+<!--                         upper_b <- list() -->
+<!--                         all_zero_nc <- list() -->
+
+
+<!--                         for(taxa in 1:length(taxa_post)){ -->
+
+<!--                                 burnIn  <- burnIn -->
+<!--                                 acceptance[[taxa]]  <-  1-mean(duplicated(taxa_post[[taxa]][-(1:burnIn),])) -->
+
+<!--                                 exp_post_s[[taxa]] <- mean(taxa_post[[taxa]][-(1:burnIn),]) -->
+
+<!--                                 hdi_v <- hdi(taxa_post[[taxa]][-(1:burnIn),], credMass = cov_pro) -->
+<!--                                 lower_s[[taxa]] <- round(hdi_v[1], digits = 0) -->
+<!--                                 upper_s[[taxa]] <- round(hdi_v[2], digits = 0) -->
+<!--                                 b_int <- rgamma((itera-burnIn+1), shape = gammPrior[[sam]][[1]][taxa], rate = gammPrior[[sam]][[2]][taxa]) -->
+
+<!--                                 hdi_b <- hdi(b_int, credMass = cov_pro) -->
+<!--                                 lower_b[[taxa]] <- round(hdi_b[1], digits = 0) -->
+<!--                                 upper_b[[taxa]] <- round(hdi_b[2], digits = 0) -->
+
+<!--                                 all_zero_nc[[taxa]] <-  gammPrior[[sam]][[5]][taxa] -->
+
+<!--                         } -->
+
+
+<!--                         df[[sam]] <- data.frame(Species = taxa_names(psPlByBlock[[blk]]), -->
+<!--                                          xj = as.numeric(gammPrior[[sam]][[3]]), -->
+<!--                                          l_s = unlist(lower_s), -->
+<!--                                          u_s = unlist(upper_s), -->
+<!--                                          l_b = unlist(lower_b), -->
+<!--                                          u_b = unlist(upper_b), -->
+<!--                                          all_zero_nc = unlist(all_zero_nc) -->
+<!--                                          ) -->
+
+<!--                         df[[sam]] <- arrange(filter(df[[sam]], ((l_s > u_b)&(l_s>0))), desc(xj)) -->
+
+
+<!--                         if(dim(df[[sam]])[1]==0){ -->
+<!--                                 df[[sam]] <- data.frame(Species="Negative", -->
+<!--                                                  xj="Negative", -->
+<!--                                                  l_s="Negative", -->
+<!--                                                  u_s="Negative", -->
+<!--                                                  l_b ="Negative", -->
+<!--                                                  u_b="Negative", -->
+<!--                                                  all_zero_nc = "Negative") -->
+<!--                         } -->
+
+
+<!--                         all_real_taxa[[sam]] <- as.character(df[[sam]]$Species) -->
+
+<!--                 } -->
+
+<!--                 all_real_taxa_lt[[blk]] <- all_real_taxa -->
+
+<!--                 df_blk[[blk]] <- df -->
+<!--         } -->
+
+<!-- ``` -->
+
+<!-- number of true sequences found by BARBI in each sample -->
+<!-- ```{r} -->
+<!-- #number of not contaminant ASVs found by BARBI in each sample -->
+<!-- lapply(all_real_taxa_lt[[1]], function(y){ -->
+<!--   length(y) -->
+<!-- }) -->
+
+<!-- ``` -->
+
+
+<!-- sequence has been identified as true signal because there is no reads in negative control samples. -->
+
+<!-- ```{r} -->
+<!-- lapply(as.list(c(seq(1,8))), function(x){ -->
+<!--   df[[x]]$Species[which(df[[x]]$all_zero_nc == "Yes")] -->
+<!-- }) -->
+
+<!-- ``` -->
+
+<!-- true sequences (removing contaminants that are not in negative control samples) -->
+<!-- ```{r} -->
+<!-- lapply(as.list(c(seq(1,8))), function(x){ -->
+<!--   dim(df[[x]])[1] - length(df[[x]]$Species[which(df[[x]]$all_zero_nc == "Yes")]) -->
+<!-- }) -->
+<!-- ``` -->
+
+<!-- BARBI only misidentifed one true sequence (seq8 in 1:1679616 diluted sample) as a contaminating sequence at .95 probability. But, BARBI idetified all true sequences at .94 probability. Moreover, BARBI removed 100\% of contaminating sequences in all samples when they are present in at least one of the negative control sample.  -->
+
+
+##  Show that the negative control samples do not capture all of the contaminants.
+
+```{r}
+seqNature <- readxl::read_excel("./Data/rep_set_tax_assignments_classified.xlsx")
+seqNature <- select(seqNature, 1:3)
+names(seqNature) <- c("ASV","Nature", "Taxanomy")
+seqNature$Nature <- factor(seqNature$Nature)
+if.atleast.one.category <- levels(seqNature$Nature)[1:3]
+
+ps.genus <- tax_glom(ps, taxrank = "Genus")
+ps.family <- tax_glom(ps, taxrank = "Family")
+
+contSeq <- function(ps, sample.name, seqNature, if.atleast.one.category){
+  df.sample.i <- data.frame(ot = otu_table(ps)[, sample.name])
+  names(df.sample.i) <- "ot"
+  df.sample.i <- mutate(df.sample.i, ASV = rownames(df.sample.i))
+  df.sample.i <- left_join(df.sample.i, seqNature, by = "ASV")
+  df.sample.i.true.seq <- filter(df.sample.i, (ot > 0) & (Nature %in% if.atleast.one.category))
+  true.seq.sample.i <- as.character(df.sample.i.true.seq$ASV)
+  return(true.seq.sample.i)
+}
+
+negative.sample.names <- sample_names(ps)[1:10]
+
+
+```
+
+Saturation plot at ASV 
+```{r}
+cont.seq.all.samples <- lapply(negative.sample.names, FUN = contSeq, ps = ps, seqNature = seqNature, if.atleast.one.category = if.atleast.one.category)
+total.cont.cum <- numeric()
+cont.seq <- list()
+cont.seq[[1]] <- unique(cont.seq.all.samples[[1]])
+total.cont.cum[1] <- length(cont.seq[[1]])
+for(i in 2:length(cont.seq.all.samples)){
+  cont.seq[[i]] <- unique(c(cont.seq[[(i-1)]], cont.seq.all.samples[[i]]))
+  total.cont.cum[i] <- length(cont.seq[[i]])
+}
+
+df.cum.cont <- data.frame(negative.sample = paste0("Neg.ctrl_", seq(1, length(cont.seq.all.samples))), total.cont.cum = total.cont.cum)
+
+df.cum.cont$negative.sample <- factor(df.cum.cont$negative.sample, levels = as.character(df.cum.cont$negative.sample))
+
+ggplot(df.cum.cont) + 
+  geom_point(aes(x = negative.sample, y = total.cont.cum)) +
+  xlab("negative control sample") +
+  ylab("cumulative contaminating sequences")
+```
+
+Above figure shows that not all the contaminating sequences are found in all the negative control samples.
+
+Saturation plot at Genus 
+```{r}
+cont.seq.all.samples <- lapply(negative.sample.names, FUN = contSeq, ps = ps.genus, seqNature = seqNature, if.atleast.one.category = if.atleast.one.category)
+total.cont.cum <- numeric()
+cont.seq <- list()
+cont.seq[[1]] <- unique(cont.seq.all.samples[[1]])
+total.cont.cum[1] <- length(cont.seq[[1]])
+for(i in 2:length(cont.seq.all.samples)){
+  cont.seq[[i]] <- unique(c(cont.seq[[(i-1)]], cont.seq.all.samples[[i]]))
+  total.cont.cum[i] <- length(cont.seq[[i]])
+}
+
+df.cum.cont <- data.frame(negative.sample = paste0("Neg.ctrl_", seq(1, length(cont.seq.all.samples))), total.cont.cum = total.cont.cum)
+
+df.cum.cont$negative.sample <- factor(df.cum.cont$negative.sample, levels = as.character(df.cum.cont$negative.sample))
+
+ggplot(df.cum.cont) + 
+  geom_point(aes(x = negative.sample, y = total.cont.cum)) +
+  xlab("negative control sample") +
+  ylab("cumulative contaminating sequences")
+```
+
+Saturation plot at Family
+```{r}
+cont.seq.all.samples <- lapply(negative.sample.names, FUN = contSeq, ps = ps.family, seqNature = seqNature, if.atleast.one.category = if.atleast.one.category)
+total.cont.cum <- numeric()
+cont.seq <- list()
+cont.seq[[1]] <- unique(cont.seq.all.samples[[1]])
+total.cont.cum[1] <- length(cont.seq[[1]])
+for(i in 2:length(cont.seq.all.samples)){
+  cont.seq[[i]] <- unique(c(cont.seq[[(i-1)]], cont.seq.all.samples[[i]]))
+  total.cont.cum[i] <- length(cont.seq[[i]])
+}
+
+df.cum.cont <- data.frame(negative.sample = paste0("Neg.ctrl_", seq(1, length(cont.seq.all.samples))), total.cont.cum = total.cont.cum)
+
+df.cum.cont$negative.sample <- factor(df.cum.cont$negative.sample, levels = as.character(df.cum.cont$negative.sample))
+
+ggplot(df.cum.cont) + 
+  geom_point(aes(x = negative.sample, y = total.cont.cum)) +
+  xlab("negative control sample") +
+  ylab("cumulative contaminating sequences")
+```
