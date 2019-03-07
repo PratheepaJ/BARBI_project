@@ -1,0 +1,397 @@
+---
+title: 'Healthy Flossing BARBI Analysis'
+author: "PJ, FS, HC, SH"
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+output: 
+    html_document:
+        toc: true
+---
+
+We use the median of $S_{j}^{0}$ of negative control samples and max of $\mu_{ij}^{0}$ of negative control samples. In the second batch, there are two water negative control samples with library size in hundreds. 
+
+```{r include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+```{r install_packages, eval=FALSE}
+pkgs <- c("DESeq2","phyloseq","dplyr",
+          "tidyr","R.utils","BiocParallel",
+          "doParallel","parallel","HDInterval",
+          "grid","xtable","gtable",
+          "gridExtra","BiocStyle","magrittr",
+          "devtools")
+
+if (!requireNamespace("BiocManager")){
+  install.packages("BiocManager")
+}
+    
+BiocManager::install(setdiff(pkgs, installed.packages()), update = TRUE)
+
+devtools::install_github("PratheepaJ/BARBI",auth_token = "33c5f43cc3f1772c19a441e15fc9478c3bf91b67")
+```
+
+
+Load packages:
+```{r load_packages}
+#library(BARBI)
+library(devtools)
+library(phyloseq)
+library(DESeq2)
+library(dplyr)
+library(tidyr)
+library(R.utils)
+library(BiocParallel)
+library(doParallel)
+library(parallel)
+library(HDInterval)
+library(grid)
+library(xtable)
+library(gtable)
+library(gridExtra)
+library(BiocStyle)
+library(magrittr)
+sourceDirectory("./R")
+#sourceDirectory("/Users/jpratheepa31/Dropbox/GitHub/BARBI/R")
+```
+
+
+Set the computational resources
+```{r}
+t1 <- proc.time()
+ncores <- as.integer(Sys.getenv("SLURM_NTASKS"))
+if(is.na(ncores)) ncores <- parallel::detectCores()
+
+ncores
+```
+
+##      Load the phyloseq object
+
+Load R file to create a phyloseq object from Kraken files: (this directory should be set according to the files directory). I saved the phyloseq object as ``pshf.rds``. 
+
+
+Read phyloseq object pshf.rds
+```{r read-phyloseq}
+ps <- readRDS("./Data/pshf.rds")
+ps
+if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
+```
+
+##  Identifying batches
+
+In a previous PCoA analysis of this dataset, the samples separated into two separate clusters, which correlated with two groups of DNA extraction batches. 
+
+To reduce the batch-effects of contamination, we specified two "blocks" of samples, and analyzed each block separately with BARBI. 
+
+```{r adding_blocks}
+set1 <- c("FL002","FL003","FL004","FL005")
+set2 <- c("FL006","FL007","FL008","FL009","FL010","FL011")
+
+#       the following negative controls are in set 2 only.
+nctrl <- c("Water.Keck.1","Phix.1","Phix.2","Water.ctrl.1","Water.ctrl.2")
+
+ext.num <- sample_data(ps)$SubjectName
+blocks <-ifelse(ext.num %in% set1, "Set1", "Set2")
+
+sample_data(ps)$block <- blocks
+```
+
+
+Subset samples such that only patient plasma and negative control samples are included in the final phyloseq object. 
+
+```{r choose_samples}
+ps <- subset_samples(ps,Sample_Type %in% c("Plasma", "Control"))
+```
+
+##  Preprocessing
+
+Identify the species that are not present in at least one plasma sample and removed them from the phyloseq object. Label these species as contaminants. 
+
+```{r filter_taxa}
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps_plasma <- subset_samples(ps,Sample_Type %in% c("Plasma"))
+prevTaxaP <- apply(otu_table(ps_plasma), 1 ,function(x){sum(x>0)})
+
+Contaminants1 <- names(prevTaxaP)[prevTaxaP == 0]
+ps <- prune_taxa(prevTaxaP > 0, ps)
+```
+
+Contaminants1 contains a list of taxa that are zero prevalence in plasma samples. (identified before applying BARBI)
+
+Check the distribution of library size/sample depth to see whether there are plasma samples with very small library sizes that should be dropped from the analysis.
+
+```{r samples-plasma}
+totalReads <- colSums(otu_table(subset_samples(ps, Sample_Type == "Plasma")))
+hist(log(totalReads),yaxs="i",xaxs="i",main="Distribution of total reads per sample", breaks=50)
+```
+
+
+```{r samples-ctrl}
+totalReads <- colSums(otu_table(subset_samples(ps, Sample_Type == "Control")))
+hist(log(totalReads),yaxs="i",xaxs="i",main="Distribution of total reads per sample", breaks=50)
+```
+
+See a summary of the plasma and negative control samples in each block. 
+
+```{r summary_stat}
+table(sample_data(ps)$Sample_Type, sample_data(ps)$block)
+```
+
+#       Bayesian Inference 
+
+##      Prepare the phyloseq object for the Bayesian inference
+
+We use Bayesian inference to identify contaminants in each block separately to account for the batch-effects of contamination. 
+
+Thus, split the phyloseq object into multiple phyloseq objects corresponding to each block, and store the phyloseq objects as a list of phyloseq objects, `psByBlock`. 
+
+Select negative control samples from each block and store as a list of phyloseq objects, `psNCbyBlock`. 
+
+Select all species that have a prevalence of zero (i.e., have zero reads) in all negative control samples for each block and store as a list of phyloseq objects, `psallzeroInNC`.
+
+Select all plasma samples from each block and store as a list of phyloseq objects, `psPlByBlock`.
+
+```{r list-of-phyloseq}
+psBlockResult <- psBlockResults(ps, sampleTypeVar = "Sample_Type", caselevels = c("Plasma"), controllevel= "Control", sampleName = "SampleCode", blockVar = "block")
+
+psByBlock <- psBlockResult[[1]]
+psNCbyBlock <- psBlockResult[[2]]
+psallzeroInNC <- psBlockResult[[3]]
+psPlByBlock <- psBlockResult[[4]]
+
+saveRDS(psByBlock,"./Results/psByBlock.rds")
+```
+
+##      Estimate the distribution parameters for the instensity of contamination in negative control samples
+
+Estimate the gamma distribution parameters for the intensity of contaminants using the negative control samples for each block.
+
+1) Estimate mean $\mu_{ij}^{0}$ and dispersion $\gamma_{i}^{0}$.
+
+2) Find the shape $\alpha_{ij}^{0}$ and rate $\beta_{ij}^{0}$ parameters.
+
+3) Median of normalized library sizes $S_{j}^{0}$.
+
+Choose option `stringent = FALSE` to not using sample mean (of non-zero abundances) if the estiamted mean is less than one in negative control samples.
+
+```{r estimate-cont-intensity-ncontrols}
+alphaBetaNegControl <- alphaBetaNegControl(psNCbyBlock = psNCbyBlock, stringent = FALSE)
+
+saveRDS(alphaBetaNegControl, "./Results/alphaBetaNegControl.rds")
+```
+
+
+##      Estimate the distribution parameters for the intensity of contamination in each plasma sample
+
+For each plasma sample, estimate the gamma distribution parameters for the intensity of contamination using the scaling property of the gamma distribution.
+
+1) Find the shape $\alpha_{ij}^{c} = \frac{S_{j}}{S^{0}} \alpha_{ij}^{0}$ and rate $\beta_{ij}^{0} = \beta_{ij}^{c}$ parameters.
+
+
+```{r estimate-cont-intensity-in-each-plasma}
+num_blks <- length(alphaBetaNegControl)
+blks <- seq(1, num_blks) %>% as.list
+
+gammaPrior_all_blks <- lapply(blks, function(x){
+        gammaPrior <- alphaBetaContInPlasma(psPlByBlock = psPlByBlock, psallzeroInNC = psallzeroInNC, blk = x, alphaBetaNegControl = alphaBetaNegControl)
+        return(gammaPrior)
+})
+proc.time()-t1
+
+saveRDS(gammaPrior_all_blks, "./Results/gammaPrior_all_blks.rds")
+```
+
+
+##      Sampling from the posterior for the intensity of true signal
+
+For all samples and for all taxa, sample from the posterior for the intensity of true signal using the Metropolis-Hasting MCMC. Specifify the number of iterations in the MCMC using the option `itera`. 
+
+Save the gamma prior for the intensity of contamination and the posterior samples.
+
+The  suggeseted itera is 10000. 
+
+```{r sampling-post-true-int}
+t1 <- proc.time()
+
+post_all_blocks <- lapply(blks, function(x){
+        post_int_all_taxa <- samplingPosterior(psPlByBlock = psPlByBlock,
+                blk = x,
+                gammaPrior_Cont = gammaPrior_all_blks[[x]],
+                itera = 10000,
+                ncores = ncores)
+        return(post_int_all_taxa)
+})
+
+proc.time()-t1
+
+
+gammaPrior_posTrueSing_all_blocks <- list(gammaPrior_all_blks,post_all_blocks)
+
+saveRDS(gammaPrior_posTrueSing_all_blocks, file= "./Results/gammaPrior_posTrueSing_all_blocks_hf.rds")
+```
+
+#       Display the results
+
+##     Make summaires from the BARBI results.
+
+Choose the number of MCMC to be removed using the option `burnIn`.  It must be less than `itera`.
+
+Choose the coverage probability to construct the highest (posterior) density interval using the option `cov.pro`.
+
+The suggested burnIn is 1000 for itera = 10000.
+
+The output table for each sample displays the following:
+
+-   Species = species names that are not contaminant,
+-   xj  =   observed reads for the species in that sample,
+-   l_s =   lower limit of the highest (posterior) density interval (credible interval) for the true signal intensity,
+(the probability that the true intensity lies between l_s and l_u is the cov.pro)
+-   u_s =   upper limit of the highest (posterior) density interval (credible interval) for the true signal intensity,
+-   l_b = lower limit of the highest density interval for the contaminant intensity,
+-   u_b = upper limit of the highest density interval for the contaminant intensity,
+-   all_zero_nc = whether all the negative control samples with zero reads for that particular species
+
+Taxa/ASVs/Species are labeled as contaminants if the lower limit of the true signal (l_s) is greater than the upper limit of the contaminant (u_b). 
+
+
+```{r make_tables}
+itera <- 1000
+burnIn <- 100
+cov_pro <- .95
+mak_tab <- TRUE # need to change to TRUE if you want to make tables
+#psByBlock <- readRDS("./Results/psByBlock.rds")
+num_blks <- length(psByBlock)
+
+gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_all_blocks_hf.rds")
+
+# gammaPrior_posTrueSing_all_blocks is a list that contains first element is the gamma parameters of contaminant intensity in the plasma samples, second element is the posterior sampling 
+gammaPrior_all_blks <- gammaPrior_posTrueSing_all_blocks[[1]]
+post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]]
+
+
+all_real_taxa_lt <- list()
+
+for(blk in 1:num_blks){
+
+                taxa_post_all_sam <- post_all_blocks[[blk]]
+                gammPrior <- gammaPrior_all_blks[[blk]]
+
+                total_summary_table <- NULL
+
+                all_real_taxa <- character()
+
+                for(sam in 1:nsamples(psPlByBlock[[blk]])){
+
+                        taxa_post <- taxa_post_all_sam[[sam]]
+                        acceptance <- list() #  acceptance rate of MC sampling 
+                        exp_post_s <- list()
+                        lower_s <- list() # s true signal
+                        upper_s <- list()
+                        lower_b <- list() # b- contaminant
+                        upper_b <- list()
+                        all_zero_nc <- list()
+                        
+        
+                        for(taxa in 1:length(taxa_post)){
+                                
+                                burnIn  <- burnIn
+                                acceptance[[taxa]]  <-  1-mean(duplicated(taxa_post[[taxa]][-(1:burnIn),]))
+
+                                exp_post_s[[taxa]] <- mean(taxa_post[[taxa]][-(1:burnIn),])
+
+                                hdi_v <- hdi(taxa_post[[taxa]][-(1:burnIn),], credMass = cov_pro)
+                                lower_s[[taxa]] <- round(hdi_v[1], digits = 0)
+                                upper_s[[taxa]] <- round(hdi_v[2], digits = 0)
+                                b_int <- rgamma((itera-burnIn+1), shape = gammPrior[[sam]][[1]][taxa], rate = gammPrior[[sam]][[2]][taxa])
+
+                                hdi_b <- hdi(b_int, credMass = cov_pro)
+                                lower_b[[taxa]] <- round(hdi_b[1], digits = 0)
+                                upper_b[[taxa]] <- round(hdi_b[2], digits = 0)
+
+                                all_zero_nc[[taxa]] <-  gammPrior[[sam]][[5]][taxa]
+                                
+                        }
+
+
+                        df <- data.frame(Species=taxa_names(psPlByBlock[[blk]]),
+                                         xj = as.numeric(gammPrior[[sam]][[3]]),
+                                         l_s = unlist(lower_s),
+                                         u_s = unlist(upper_s),
+                                         l_b = unlist(lower_b),
+                                         u_b = unlist(upper_b),
+                                         all_zero_nc = unlist(all_zero_nc)
+                                         )
+
+                        df <- arrange(filter(df, ((l_s > u_b)&(l_s > 0))), desc(xj))
+
+
+                        if(dim(df)[1]==0){
+                                df <- data.frame(Species="Negative",
+                                                 xj="Negative",
+                                                 l_s="Negative",
+                                                 u_s="Negative",
+                                                 l_b ="Negative",
+                                                 u_b="Negative",
+                                                 all_zero_nc = "Negative")
+                        }
+
+
+                        all_real_taxa <- c(all_real_taxa,
+                                           as.character(df$Species))
+                        if(mak_tab){
+                                filname <- paste0("./Results/", sample_names(psPlByBlock[[blk]])[sam], ".png")
+
+                                png(filname, height = 600, width = 750)
+
+                                df_p <- tableGrob(df)
+                                
+                                title <- textGrob(sample_names(psPlByBlock[[blk]])[sam], gp = gpar(fontsize = 12))
+
+                                padding <- unit(0.5,"line")
+
+                                df_p <- gtable_add_rows(
+                                        df_p, heights = grobHeight(title) + padding, pos = 0
+                                )
+
+                                df_p <- gtable_add_grob(
+                                        df_p, list(title),
+                                        t = 1, l = 1, r = ncol(df_p) 
+                                )
+
+                                grid.newpage()
+                                grid.draw(df_p)
+                                dev.off()
+                        }
+
+
+                        all_real_taxa <- unique(all_real_taxa)
+                }
+
+                all_real_taxa_lt[[blk]] <- all_real_taxa
+        }
+
+```
+
+
+##      Construct a phyloseq object with the true signal and plasma samples
+```{r make_phyloseq}
+saveRDS(all_real_taxa_lt, "./Results/all_real_taxa_lt_healthy_flossing.rds")
+all_real_taxa_lt <- readRDS("./Results/all_real_taxa_lt_healthy_flossing.rds")
+all_real_taxa_lt <- unlist(all_real_taxa_lt)
+all_real_taxa_lt <- all_real_taxa_lt[which(!all_real_taxa_lt=="Negative")]
+ps_decon <- prune_taxa(all_real_taxa_lt, subset_samples(ps, Sample_Type %in% "Plasma"))
+saveRDS(ps_decon,"./Results/ps_decon.rds")
+```
+
+##  A list of contaminants
+```{r }
+contaminants <- taxa_names(ps)[!(taxa_names(ps) %in% taxa_names(ps_decon))]
+saveRDS(contaminants,"./Results/contaminants_healthy_flossing.rds")
+```
+
+# Session Info 
+
+```{r session_info}
+sessionInfo()
+```

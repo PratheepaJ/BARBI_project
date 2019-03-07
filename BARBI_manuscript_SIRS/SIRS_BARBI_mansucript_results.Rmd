@@ -312,7 +312,7 @@ post_all_blocks <- lapply(blks, function(x){
         post_int_all_taxa <- samplingPosterior(psPlByBlock = psPlByBlock,
           blk = x,
           gammaPrior_Cont = gammaPrior_all_blks[[x]],
-          itera = 100,
+          itera = 10000,
           ncores = ncores)
         return(post_int_all_taxa)
 })
@@ -353,13 +353,13 @@ Taxa/ASVs/Species are labeled as contaminants if the lower limit of the true rea
 
 
 ```{r make_tables}
-itera <- 100
-burnIn <- 5
+itera <- 10000
+burnIn <- 5000
 cov_pro <- .95
 mak_tab <- TRUE # need to change to TRUE if you want to make tables
 #psByBlock <- readRDS("./Results/psByBlock2.rds")
 
-gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_all_blocks_SIRS.rds")
+#gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_all_blocks_SIRS.rds")
 
 gammaPrior_all_blks <- gammaPrior_posTrueSing_all_blocks[[1]]
 post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]]
@@ -519,18 +519,18 @@ saveRDS(contaminants, "./Results/contaminants_SIRS.rds")
 ##  Histograms
 ```{r}
 library(tidyr)
-itera <- 100
-burnIn <- 5
+itera <- 10000
+burnIn <- 5000
 cov_pro <- .95
 mak_tab <- TRUE # need to change to TRUE if you want to make tables
 #psByBlock <- readRDS("./Results/psByBlock2.rds")
 
-gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_all_blocks_SIRS.rds")
+#gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_all_blocks_SIRS.rds")
 
 gammaPrior_all_blks <- gammaPrior_posTrueSing_all_blocks[[1]]
 post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]]
 
-blk <- 1
+blk <- 3
 
 taxa_post_all_sam <- post_all_blocks[[blk]]
 gammPrior <- gammaPrior_all_blks[[blk]]
@@ -549,7 +549,7 @@ for(j in 1: length(sample.names)){
     
     taxa.post <- taxa_post_all_sam[[desired.sample.index]]
     
-    burnIn <- 6
+    burnIn <- 5001
     signal.hist <- taxa.post[tax_interested_ind]
     signal.hist <- lapply(signal.hist,function(x){x[-(1:burnIn),]})
     signal.df <- data.frame(do.call("cbind", signal.hist))

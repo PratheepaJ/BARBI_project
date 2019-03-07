@@ -20,3 +20,8 @@ BARBI_manuscript_SIRS/Data/
 BARBI_manuscript_SIRS/Results/
 BARBI_manuscript_SIRS/*.html
 BARBI_manuscript_SIRS/*.sbatch
+BARBI_manuscript_hf/Data/
+BARBI_manuscript_hf/Figures/
+BARBI_manuscript_hf/Results/
+BARBI_manuscript_hf/*.html
+BARBI_manuscript_hf/*.sbtach
