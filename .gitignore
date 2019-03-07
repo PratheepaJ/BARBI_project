@@ -16,8 +16,10 @@ Zymo_Analysis/Zymo_Dada2_pipeline/RawSeq/
 Zymo_Analysis/Zymo_Dada2_pipeline/*.html
 Zymo_Analysis/Zymo_Dada2_pipeline/*.sbatch
 BARBI_manuscript_SIRS/Figures/
+BARBI_manuscript_SIRS/Figures 1/
 BARBI_manuscript_SIRS/Data/
 BARBI_manuscript_SIRS/Results/
+BARBI_manuscript_SIRS/Results 1/
 BARBI_manuscript_SIRS/*.html
 BARBI_manuscript_SIRS/*.sbatch
 BARBI_manuscript_hf/Data/

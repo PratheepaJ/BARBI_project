@@ -420,24 +420,24 @@ for(blk in 1:num_blks){
 
                         df <- data.frame(Species=taxa_names(psPlByBlock[[blk]]),
                                          xj=as.numeric(gammPrior[[sam]][[3]]),
-                                         l_s = unlist(lower_s),
-                                         u_s = unlist(upper_s),
-                                         l_b = unlist(lower_b),
-                                         u_b = unlist(upper_b),
-                                         all_zero_nc = unlist(all_zero_nc)
+                                         l_r = unlist(lower_s),
+                                         u_r = unlist(upper_s),
+                                         l_c = unlist(lower_b),
+                                         u_c = unlist(upper_b),
+                                         prev_zero_nc = unlist(all_zero_nc)
                                          )
 
-                        df <- arrange(filter(df,((l_s>u_b)&(l_s>0))), desc(xj))
+                        df <- arrange(filter(df,((l_r > u_c)&(l_r > 0))), desc(xj))
 
 
                         if(dim(df)[1]==0){
                                 df <- data.frame(Species="Negative",
                                                  xj="Negative",
-                                                 l_s="Negative",
-                                                 u_s="Negative",
-                                                 l_b ="Negative",
-                                                 u_b="Negative",
-                                                 all_zero_nc = "Negative")
+                                                 l_r="Negative",
+                                                 u_r="Negative",
+                                                 l_c ="Negative",
+                                                 u_c="Negative",
+                                                 prev_zero_nc = "Negative")
                         }
 
 

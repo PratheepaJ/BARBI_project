@@ -52,6 +52,7 @@ library(gtable)
 library(gridExtra)
 library(BiocStyle)
 library(magrittr)
+library(ggplot2)
 sourceDirectory("./R")
 #sourceDirectory("/Users/jpratheepa31/Dropbox/GitHub/BARBI/R")
 ```
@@ -78,7 +79,10 @@ ps
 if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
 ```
 
-##  Identifying batches
+
+
+
+###  Identifying batches
 
 In a previous PCoA analysis of this dataset, the samples separated into two separate clusters, which correlated with two groups of DNA extraction batches. 
 
@@ -104,7 +108,69 @@ Subset samples such that only patient plasma and negative control samples are in
 ps <- subset_samples(ps,Sample_Type %in% c("Plasma", "Control"))
 ```
 
-##  Preprocessing
+
+###  Total reads 
+
+Compute total reads in each plasma and negative control sample. Bowtie2 is then used to identifed non-human reads. 
+
+```{r}
+sample_data(ps)$Reads <- as.numeric(gsub(",","",sample_data(ps)$Reads))
+summary(sample_data(subset_samples(ps, Sample_Type == "Plasma"))$Reads)/(2*10^6)
+summary(sample_data(subset_samples(ps, Sample_Type == "Control"))$Reads)/(2*10^6)
+```
+
+
+### Non-human reads (in ten thousands)
+
+```{r}
+
+sample_data(ps)$Non.Human.Reads[which(sample_data(ps)$Non.Human.Reads < 0)] <- -1 *sample_data(ps)$Non.Human.Reads[which(sample_data(ps)$Non.Human.Reads < 0)]
+summary(sample_data(subset_samples(ps, Sample_Type == "Plasma"))$Non.Human.Reads)/(2*10^4)
+summary(sample_data(subset_samples(ps, Sample_Type == "Control"))$Non.Human.Reads)/(2*10^6)
+```
+
+
+###  heatmap
+
+```{r}
+ps.top <- ps 
+
+# do arcsinh transformation
+ot <- otu_table(ps.top) %>% data.frame %>% as.matrix
+
+geo_mean <- function(x) {
+        if(all(x == 0)){
+            val <- 0
+        }else{
+            val <- exp(sum(log(x[x > 0]))/length(x))
+        }
+        return(val)
+    }
+
+geom_mean_row <- apply(ot, 1, FUN = geo_mean)
+
+
+sj <- estimateSizeFactorsForMatrix(ot, median, geoMeans = geom_mean_row)
+ot.trans <- t(asinh(t(ot)/sj))
+ps.top <- phyloseq(otu_table(ot.trans, taxa_are_rows = TRUE), sample_data(ps.top), tax_table(ps.top))
+    
+# choose top 30 species in plasma samples for heatmap
+top <- names(sort(taxa_sums(subset_samples(ps.top, Sample_Type == "Plasma")), decreasing=TRUE))[1:30]
+
+ps.top <- prune_taxa(top, ps.top)
+otu_table(ps.top) <- otu_table(ps.top) +1
+
+# order sample by plasma and control
+df <- data.frame(sample_data(ps)$SampleCode, sample_data(ps)$Sample_Type)
+df <- df[order(df$sample_data.ps..Sample_Type),]
+sam.order <- as.character(df$sample_data.ps..SampleCode)
+
+p <- plot_heatmap(ps.top, sample.label = "SampleCode", taxa.label="Species", taxa.order = top, sample.order = sam.order) + guides(fill = guide_legend(title="asinh abundance")) + facet_wrap(~block, scales = "free_x")
+p
+ggsave("./Figures/heatmap_hf_top.eps", plot = p, width = 20, height = 8)
+```
+
+###  Preprocessing
 
 Identify the species that are not present in at least one plasma sample and removed them from the phyloseq object. Label these species as contaminants. 
 
@@ -256,8 +322,8 @@ Taxa/ASVs/Species are labeled as contaminants if the lower limit of the true sig
 
 
 ```{r make_tables}
-itera <- 1000
-burnIn <- 100
+itera <- 10000
+burnIn <- 5000
 cov_pro <- .95
 mak_tab <- TRUE # need to change to TRUE if you want to make tables
 #psByBlock <- readRDS("./Results/psByBlock.rds")
@@ -271,6 +337,7 @@ post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]]
 
 
 all_real_taxa_lt <- list()
+real.taxa.in.each.sample <- list()
 
 for(blk in 1:num_blks){
 
@@ -316,29 +383,31 @@ for(blk in 1:num_blks){
 
                         df <- data.frame(Species=taxa_names(psPlByBlock[[blk]]),
                                          xj = as.numeric(gammPrior[[sam]][[3]]),
-                                         l_s = unlist(lower_s),
-                                         u_s = unlist(upper_s),
-                                         l_b = unlist(lower_b),
-                                         u_b = unlist(upper_b),
-                                         all_zero_nc = unlist(all_zero_nc)
+                                         l_r = unlist(lower_s),
+                                         u_r = unlist(upper_s),
+                                         l_c = unlist(lower_b),
+                                         u_c = unlist(upper_b),
+                                         prev_zero_nc = unlist(all_zero_nc)
                                          )
 
-                        df <- arrange(filter(df, ((l_s > u_b)&(l_s > 0))), desc(xj))
+                        df <- arrange(filter(df, ((l_r > u_c)&(l_r > 0))), desc(xj))
 
 
                         if(dim(df)[1]==0){
                                 df <- data.frame(Species="Negative",
                                                  xj="Negative",
-                                                 l_s="Negative",
-                                                 u_s="Negative",
-                                                 l_b ="Negative",
-                                                 u_b="Negative",
-                                                 all_zero_nc = "Negative")
+                                                 l_r="Negative",
+                                                 u_r="Negative",
+                                                 l_c ="Negative",
+                                                 u_c="Negative",
+                                                 prev_zero_nc = "Negative")
                         }
 
 
                         all_real_taxa <- c(all_real_taxa,
                                            as.character(df$Species))
+                        
+                        #### make tables
                         if(mak_tab){
                                 filname <- paste0("./Results/", sample_names(psPlByBlock[[blk]])[sam], ".png")
 
@@ -366,6 +435,7 @@ for(blk in 1:num_blks){
 
 
                         all_real_taxa <- unique(all_real_taxa)
+                        
                 }
 
                 all_real_taxa_lt[[blk]] <- all_real_taxa
@@ -376,21 +446,110 @@ for(blk in 1:num_blks){
 
 ##      Construct a phyloseq object with the true signal and plasma samples
 ```{r make_phyloseq}
-saveRDS(all_real_taxa_lt, "./Results/all_real_taxa_lt_healthy_flossing.rds")
-all_real_taxa_lt <- readRDS("./Results/all_real_taxa_lt_healthy_flossing.rds")
+saveRDS(all_real_taxa_lt, "./Results/all_real_taxa_hf.rds")
+all_real_taxa_lt <- readRDS("./Results/all_real_taxa_hf.rds")
 all_real_taxa_lt <- unlist(all_real_taxa_lt)
 all_real_taxa_lt <- all_real_taxa_lt[which(!all_real_taxa_lt=="Negative")]
 ps_decon <- prune_taxa(all_real_taxa_lt, subset_samples(ps, Sample_Type %in% "Plasma"))
 saveRDS(ps_decon,"./Results/ps_decon.rds")
 ```
 
-##  A list of contaminants
-```{r }
-contaminants <- taxa_names(ps)[!(taxa_names(ps) %in% taxa_names(ps_decon))]
-saveRDS(contaminants,"./Results/contaminants_healthy_flossing.rds")
+### 
+```{r}
+sample_data(ps_decon)$block <- factor(sample_data(ps_decon)$block)
+levels(sample_data(ps_decon)$block)
+ps_decon_blk1 <- subset_samples(ps_decon, block == "Set1")
+ps_decon_blk1 <-prune_taxa(taxa_sums(ps_decon_blk1) > 0, ps_decon_blk1)
+ps_decon_blk1  
+#View(otu_table(ps_decon_blk1) %>% data.frame)
+
+ps_decon_blk2 <- subset_samples(ps_decon, block == "Set2")
+ps_decon_blk2 <-prune_taxa(taxa_sums(ps_decon_blk2) > 0, ps_decon_blk2)
+ps_decon_blk2 
+
+
 ```
 
-# Session Info 
+###  A list of contaminants
+```{r }
+contaminants <- taxa_names(ps)[!(taxa_names(ps) %in% taxa_names(ps_decon))]
+saveRDS(contaminants,"./Results/contaminants_hf.rds")
+```
+
+
+##  Histograms
+```{r}
+library(tidyr)
+itera <- 10000
+burnIn <- 5000
+cov_pro <- .95
+mak_tab <- TRUE # need to change to TRUE if you want to make tables
+#psByBlock <- readRDS("./Results/psByBlock2.rds")
+
+#gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_all_blocks_SIRS.rds")
+
+gammaPrior_all_blks <- gammaPrior_posTrueSing_all_blocks[[1]]
+post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]]
+
+blk <- 1
+
+taxa_post_all_sam <- post_all_blocks[[blk]]
+gammPrior <- gammaPrior_all_blks[[blk]]
+
+
+sample.names <- sample_names(psPlByBlock[[blk]])
+
+for(j in 1: length(sample.names)){
+    desired.sample.name <- sample.names[j]
+    desired.sample.index <- which(sample_names(psPlByBlock[[blk]]) %in% desired.sample.name)
+    tax_interested <- rownames(sort(otu_table(psPlByBlock[[blk]])[,desired.sample.index],decreasing = TRUE))[c(1:16)]
+    tax_interested_ind <- which(as.character(taxa_names(psPlByBlock[[blk]])) %in% tax_interested)
+    tax_names <- taxa_names(psPlByBlock[[blk]])[tax_interested_ind]
+    #tax_names <- df.ASV$ASV.Genus[which(as.character(df.ASV$ASV.Genus.Species) %in%  tax_names)]
+    
+    
+    taxa.post <- taxa_post_all_sam[[desired.sample.index]]
+    
+    burnIn <- 5001
+    signal.hist <- taxa.post[tax_interested_ind]
+    signal.hist <- lapply(signal.hist,function(x){x[-(1:burnIn),]})
+    signal.df <- data.frame(do.call("cbind", signal.hist))
+    colnames(signal.df) <- tax_names
+    signal.df$group <- rep("True",length=dim(signal.df)[1])
+    
+    bg <- list()
+    for(ind in 1:length(tax_interested_ind)){
+            bg[[ind]] <- rgamma(5000, shape=gammPrior[[desired.sample.index]][[1]][tax_interested_ind[ind]],rate = gammPrior[[desired.sample.index]][[2]][tax_interested_ind[ind]])
+    }
+    
+    bg.df <- data.frame(do.call("cbind",bg))
+    colnames(bg.df) <- tax_names
+    bg.df$group <- rep("Contaminant",length=dim(bg.df)[1])
+    
+    bg.signal <- rbind(signal.df, bg.df)
+    bg.signal$group <- as.factor(bg.signal$group)
+    bg_sig_long <- tidyr::gather(bg.signal,key="Taxa",value="Reads",1:(dim(bg.signal)[2]-1))
+    bg_sig_long$Taxa <- as.factor(bg_sig_long$Taxa)
+    
+    p <- ggplot(bg_sig_long, aes(x= Reads))+
+            geom_density(aes(y = ..scaled.., fill = group, color = group),alpha = .2)+
+            facet_wrap(~Taxa,scales = "free")+
+            scale_fill_manual(values=c("blue","brown"))+
+            scale_color_manual(values=c("blue","brown"))+
+            ggtitle(desired.sample.name)+
+            theme(plot.title = element_text(hjust = 0.5))+
+            theme(legend.title=element_blank(), strip.text.x = element_text(size=5)) + xlab("") + ylab("")
+    
+    fileN <- paste0("Figures/","block_",blk,"_",desired.sample.name,"_histogram",".eps")
+    ggsave(fileN, plot = p, width = 10, height = 5, units = "in")
+}
+
+```
+
+
+
+
+## Session Info 
 
 ```{r session_info}
 sessionInfo()
