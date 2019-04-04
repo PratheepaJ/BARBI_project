@@ -1,7 +1,4 @@
-BARBI_mock_based_on_comparison_paper/*.html
-BARBI_mock_based_on_comparison_paper/*.sbatch
-BARBI_mock_based_on_comparison_paper/Data/
-BARBI_mock_based_on_comparison_paper/Results/
+BARBI_mock_based_on_comparison_paper/
 Result_Report_for_Metagenomic_Data_from_Serial_dilutions_of_Zymo_Mock_Community/
 Zymo_Analysis/BARBI_Zymo_Dada2/Data/
 Zymo_Analysis/BARBI_Zymo_Dada2/Figures/
@@ -27,3 +24,4 @@ BARBI_manuscript_hf/Figures/
 BARBI_manuscript_hf/Results/
 BARBI_manuscript_hf/*.html
 BARBI_manuscript_hf/*.sbtach
+MyNotes/
