@@ -1,0 +1,580 @@
+---
+title: "Zymbo Mock Community Data Analysis (16S rRNA gene amplicon sequencing)"
+author: "Pratheepa Jeganathan, Henry Cheng"
+date: "2/4/2019"
+output: 
+  html_document:
+    toc: true
+---
+
+We have 10 negative control samples and serial dilution of ZymoBIOMICS® Microbial Community Standard.
+
+Looking at the DADA2 pipeline ASVs 2, 3, 4, 5, 6, 7, 8, 11, 17, 37, 22 are in the ZymoBIOMICS® Microbial Community Standard.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 18, fig.height = 12)
+```
+
+Loading packages
+```{r}
+library(phyloseq)
+library(DESeq2)
+library(ggplot2)
+library(lda)
+library(magrittr)
+library(dplyr)
+```
+
+```{r}
+set.theme = theme_update(panel.border = element_blank(),
+                    panel.grid = element_line(size = .8),
+                    axis.ticks = element_blank(),
+                    legend.title = element_text(size = 8),
+                    legend.text = element_text(size = 8),
+                    axis.text = element_text(size = 8),
+                    axis.title = element_text(size = 8),
+                    strip.background = element_blank(),
+                    strip.text = element_text(size = 8),
+                    legend.key = element_blank(),
+    plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+theme_set(theme_bw())
+```
+
+Set the computational resources
+
+```{r}
+ncores = as.integer(Sys.getenv("SLURM_NTASKS"))
+if(is.na(ncores)) ncores = parallel::detectCores()
+ncores
+```
+
+## Read phyloseq and exploratory analysis
+
+```{r}
+ps = readRDS("./Data/ps_zymo.rds")
+if(dim(otu_table(ps))[1]!=ntaxa(ps)){
+  otu_table(ps) = t(otu_table(ps))
+  }
+```
+
+change order of sample names
+```{r}
+ncont = paste0("NegativeControl.", seq(1, 10))
+stan = paste0("Standard.Dilution.1.",c(1, 6, 36, 216, 1296, 7776, 46656, 279936))
+
+sample_data(ps)$Name = factor(sample_data(ps)$Name, levels = c(ncont,stan))
+
+sample_names(ps) = as.character(sample_data(ps)$Name)
+```
+
+Store sequence variants, ASVs, ASV.genus, ASV.genus.species
+```{r}
+ASV = as.character(paste0("ASV_", seq(1,ntaxa(ps))))
+
+ASV.Genus = paste0("ASV_", seq(1,ntaxa(ps)), "_", as.character(tax_table(ps)[,6]))
+
+ASV.Genus.Species = paste0(ASV, "_", as.character(tax_table(ps)[,6]), "_", as.character(tax_table(ps)[,7]))
+
+df.ASV = data.frame(seq.variant = taxa_names(ps), ASV = ASV, ASV.Genus = ASV.Genus, ASV.Genus.Species = ASV.Genus.Species)
+```
+
+
+```{r }
+taxa_names(ps) = df.ASV$ASV.Genus.Species
+```
+
+### Alpha diversity
+
+```{r}
+library(ggrepel)
+ps.alpha = ps
+Pi = c(18.58, 2.03, 14.91, .29, 13.68, 11.28, 14.59, 1.46, 8.43, 10.33, 4.42) # theoretical percentage of 11 species.
+Pi = Pi/100
+true.shannon.index = sum((Pi * log(Pi))*(-1))
+true.shannon.index
+
+name.label = c("","","1:1","1:6","1:(6^2)","1:(6^3)","1:(6^4)","1:(6^5)","1:(6^6)", "1:(6^7)",as.character(rep("",8)))
+sample_data(ps.alpha)$name.label = name.label %>% factor
+
+
+name.color = c("Negative Control", "Negative Control", "1:1", "1:6", "1:6^2", "1:6^3", "1:6^4", "1:6^5", "1:6^6", "1:6^7", as.character(rep("Negative Control",8)))
+sample_data(ps.alpha)$name.color = name.color %>% factor
+
+levels(sample_data(ps.alpha)$SampleType) = c("Negative Control", "Dilution")
+
+col.manual = rainbow(9)
+
+p = plot_richness(ps.alpha, x="SampleType", 
+  measures = c("Shannon"), color = "name.label") + 
+  geom_point(size = 3) +
+  ylab("Shannon Index") + 
+  scale_color_manual(values = c("blue", col.manual[-7]))  +
+  xlab("Sample Type") +
+  geom_text_repel(aes(label = name.label), size = 4, direction = "x") +
+  theme(strip.text.x = element_blank(), legend.position = "none", axis.text.x = element_text(angle = -360)) + geom_hline (yintercept= true.shannon.index, colour="red", lty=6, lwd=1) 
+p
+```
+
+### Microbial composition of the ZymoBIOMICS® Microbial Community Standard (Zymo Research, Irvine, CA) measured 
+
+True ASVs at genus level
+
+```{r}
+# true.com.ASV = taxa_names(ps)[which(tax_table(ps)[,6] %in% c("Bacillus","Listeria","Staphylococcus", "Lactobacillus", "Escherichia/Shigella", "Enterococcus", "Salmonella", "Pseudomonas"))]
+true.com.ASV = taxa_names(ps)[c(2:8,11,17,37,22)]
+ps.true = transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.true = prune_taxa(true.com.ASV, ps.true)
+ps.true
+```
+
+### Heatmap
+
+```{r}
+ps.top = ps 
+
+ot = otu_table(ps.top) %>% data.frame %>% as.matrix
+geo_mean = function(x) {
+        if(all(x == 0)){
+            val = 0
+        }else{
+            val = exp(sum(log(x[x > 0]))/length(x))
+        }
+        return(val)
+    }
+
+geom_mean_row = apply(ot, 1, FUN = geo_mean)
+
+
+sj = estimateSizeFactorsForMatrix(ot, median, geoMeans = geom_mean_row)
+ot.trans = t(asinh(t(ot)/sj))
+ps.top = phyloseq(otu_table(ot.trans, taxa_are_rows = TRUE), sample_data(ps.top), tax_table(ps.top))
+
+top = names(sort(taxa_sums(ps.top), decreasing=TRUE))[1:30]
+
+ps.top = prune_taxa(top, ps.top)
+otu_table(ps.top) = otu_table(ps.top) +1
+p = plot_heatmap(ps.top, sample.label = "Name", taxa.label="Genus", sample.order = c(ncont,stan)) + geom_tile()
+p = p + 
+  guides(fill = guide_legend(title="asinh abundance")) + xlab("Sample")
+p
+```
+
+
+
+### Create a list of true ASVs in each diluted sample
+
+```{r}
+true.com.ASV = taxa_names(ps)[c(2:8,11,17,22,37)]
+# true.com.ASV = taxa_names(ps)[which((tax_table(ps)[,6] %in% c("Bacillus","Listeria","Staphylococcus", "Lactobacillus", "Escherichia/Shigella", "Enterococcus", "Salmonella", "Pseudomonas")))]
+
+# true.com.ASV = taxa_names(ps)[which((tax_table(ps)[,6] %in% c("Bacillus","Listeria","Staphylococcus", "Lactobacillus", "Escherichia/Shigella", "Enterococcus", "Salmonella", "Pseudomonas"))&(!is.na(tax_table(ps)[,7])))]
+
+diluted.sample.names = sample_names(ps)[3:10]
+
+trueSeq = function(sample.name, true.com.ASV){
+  df.sample.i = data.frame(ot = otu_table(ps)[, sample.name])
+  names(df.sample.i) = "ot"
+  df.sample.i = mutate(df.sample.i, ASV = rownames(df.sample.i))
+  df.sample.i.true.seq = filter(df.sample.i, (ot > 0) & (as.character(ASV) %in% true.com.ASV))
+  true.seq.sample.i = as.character(df.sample.i.true.seq$ASV)
+  return(true.seq.sample.i)
+}
+
+
+true.seq.all.samples = lapply(diluted.sample.names, FUN = trueSeq, true.com.ASV = true.com.ASV)
+
+true.seq.all.samples
+```
+
+Number of true ASVs in each dilution series sample
+```{r}
+lapply(true.seq.all.samples, function(x) {length(x)})
+```
+Number of unique true ASV in all samples
+```{r}
+length(unique(unlist(true.seq.all.samples)))
+```
+
+
+### Check the percentage of eleven ASVs in each dilution series sample
+
+```{r}
+ps.prop = transform_sample_counts(ps, function(otu) otu/sum(otu)*100)
+ps.true = prune_taxa(unique(unlist(true.seq.all.samples)), ps)
+ps.prop.true = prune_taxa(taxa_names(ps.true), ps.prop)
+dt = otu_table(subset_samples(ps.prop.true, 
+  SampleType == "Standard")) %>% data.frame()
+colnames(dt) = sample_data(subset_samples(ps.prop.true, 
+  SampleType == "Standard"))$Name
+#rownames(dt) = df.ASV$ASV.Genus[which(as.character(df.ASV$ASV.Genus.Species) %in% rownames(dt))]
+rownames(dt) = df.ASV$ASV.Genus.Species[which(as.character(df.ASV$ASV.Genus.Species) %in% rownames(dt))]
+library(knitr)
+kable(dt)
+```
+
+
+##  BARBI LDA for Zymo Data
+
+We have only one block of samples.
+
+```{r adding_blocks}
+blocks = rep("Set1", nsamples(ps))
+
+sample_data(ps)$block = blocks
+```
+
+Identify the species that are not present in at least one `SampleType == Standard` sample and removed them from the phyloseq object. Label these species as contaminants. 
+
+```{r filter_taxa}
+ps = prune_taxa(taxa_sums(ps) > 0, ps)
+ps.standard = subset_samples(ps, SampleType %in% c("Standard"))
+prevTaxaP = apply(otu_table(ps.standard), 1, function(x){sum(x>0)})
+
+Contaminants1 = names(prevTaxaP)[prevTaxaP == 0]
+length(Contaminants1)
+```
+
+```{r}
+ps = prune_taxa(prevTaxaP > 0, ps)
+ps
+```
+
+We identifed 142 ASVs not is any dilution series samples and they are classified as contaminants before using BARBI LDA.
+
+We use BARBI to infer true ASVs in each dilution series sample 
+
+Specify that the samples are on the columns and species are on the rows of `otu_table`. 
+
+Check the distribution of library depth to see whether there are samples with very small library sizes that should be dropped from the analysis.
+
+```{r filter-samples}
+if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
+totalReads <- colSums(otu_table(ps))
+hist(log(totalReads), yaxs="i", xaxs="i", main="Distribution of total reads per sample", breaks=50)
+```
+
+  
+See a summary of the `Standard` and `Negative` samples in each block. 
+
+```{r summary_stat}
+table(sample_data(ps)$SampleType, sample_data(ps)$block)
+colSums(otu_table(ps))
+```
+
+
+###      Prepare the phyloseq object for the Bayesian inference
+
+We use Bayesian inference to identify contaminants in each block separately to account for the batch-effects of contamination. 
+
+Thus, split the phyloseq object into multiple phyloseq objects corresponding to each block, and store the phyloseq objects as a list of phyloseq objects, `psByBlock`. 
+
+Select negative control samples from each block and store as a list of phyloseq objects, `psNCbyBlock`. 
+
+Select all species that have a prevalence of zero (i.e., have zero reads) in all negative control samples for each block and store as a list of phyloseq objects, `psallzeroInNC`.
+
+Select all plasma samples from each block and store as a list of phyloseq objects, `psPlByBlock`.
+
+```{r list_of_phyloseq}
+psBlockResult <- psBlockResults(ps, sampleTypeVar = "SampleType", caselevels = c("Standard"), controllevel="Negative", sampleName = "Name", blockVar = "block")
+
+psByBlock <- psBlockResult[[1]]
+psNCbyBlock <- psBlockResult[[2]]
+psallzeroInNC <- psBlockResult[[3]]
+psPlByBlock <- psBlockResult[[4]]
+
+saveRDS(psByBlock,"./Results/psByBlock.rds")
+```
+
+##      Estimate the distribution parameters for the contamination reads in negative control samples
+
+Estimate the gamma distribution parameters for the contamination reads in negative control samples using the negative control samples for each block. 
+
+
+```{r estimate_Cont_ncontrols}
+alphaBetaNegControl <- alphaBetaNegControl(psNCbyBlock = psNCbyBlock, stringent = FALSE)
+```
+
+##      Estimate the distribution parameters for the contamination reads in each plasma sample
+
+For each dilution series sample, estimate the gamma distribution parameters for the contamination reads using the scaling property of the gamma distribution. This will give an estimate for the intensity of contamination reads in each dilution series sample.
+
+
+```{r estimate_Cont_plasma}
+num_blks <- length(alphaBetaNegControl)
+blks <- seq(1, num_blks) %>% as.list
+
+gammaPrior_all_blks <- lapply(blks, function(x){
+        gammaPrior <- alphaBetaContInPlasma(psPlByBlock = psPlByBlock, psallzeroInNC = psallzeroInNC, blk = x, alphaBetaNegControl = alphaBetaNegControl)
+        return(gammaPrior)
+})
+```
+
+
+##      Sampling from the marginal posterior for the number of true reads
+
+For all samples and for all taxa, sample from the marginal posterior of the number of true reads using the Metropolis-Hasting MCMC. Specifify the number of iterations in the MCMC using the option `itera`. 
+
+Save the estimated parameters for the gamma distribution for the contamination reads in each dilution series sample stored in `gammaPrior_all_blks`.
+
+The suggeseted itera is 10,000. 
+
+```{r posterior_sample, eval=FALSE}
+t1 <- proc.time()
+
+post_all_blocks <- lapply(blks,function(x){
+        post_int_all_taxa <- samplingPosterior(psPlByBlock = psPlByBlock,
+                blk = x,
+                gammaPrior_Cont = gammaPrior_all_blks[[x]],
+                itera = 10000,
+                ncores = ncores)
+        return(post_int_all_taxa)
+})
+
+proc.time()-t1
+
+
+gammaPrior_posTrueSing_all_blocks <- list(gammaPrior_all_blks,post_all_blocks)
+
+saveRDS(gammaPrior_posTrueSing_all_blocks, file= "./Results/gammaPrior_posTrueSing_Zymo_Dada2.rds")
+```
+
+
+###     Make summaires from the BARBI results.
+
+Choose the number of MCMC to be burned using the option `burnIn`.  It must be less than `itera`.
+
+Choose the coverage probability to construct the highest posterior density interval using the option `cov.pro`.
+
+ASVs are labeled as contaminants if the lower limit of the number of true reads is less than the upper limit of the number of contaminant reads. 
+
+
+```{r make_tables, eval=FALSE}
+set.seed(10000)
+itera <- 10000
+burnIn <- 5000
+cov_pro <- .95
+mak_tab <- TRUE # need to change to TRUE if you want to make tables
+#psByBlock <- readRDS("./Results_BARBI_8_28_18/psByBlock.rds")
+num_blks <- length(psByBlock)
+
+gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_Zymo_Dada2.rds")
+
+# gammaPrior_posTrueSing_all_blocks is a list that contains first element posterior samples, second element is the samples in negative controls and dilution series samples
+# 
+gammaPrior_all_blks <- gammaPrior_posTrueSing_all_blocks[[1]]
+post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]]
+
+
+all_real_taxa_lt <- list()
+
+df_blk <- list()
+
+for(blk in 1:num_blks){
+
+                taxa_post_all_sam <- post_all_blocks[[blk]]
+                gammPrior <- gammaPrior_all_blks[[blk]]
+
+                total_summary_table <- NULL
+
+                all_real_taxa <- list()
+                
+                df <- list()
+
+                for(sam in 1:nsamples(psPlByBlock[[blk]])){
+
+  
+                        taxa_post <- taxa_post_all_sam[[sam]]
+                        acceptance <- list() #  acceptance rate of MC sampling 
+                        exp_post_s <- list()
+                        lower_s <- list() # s true signal
+                        upper_s <- list()
+                        lower_b <- list() # b- contaminat
+                        upper_b <- list()
+                        all_zero_nc <- list()
+                        
+        
+                        for(taxa in 1:length(taxa_post)){
+                                
+                                burnIn  <- burnIn
+                                acceptance[[taxa]]  <-  1-mean(duplicated(taxa_post[[taxa]][-(1:burnIn),]))
+
+                                exp_post_s[[taxa]] <- mean(taxa_post[[taxa]][-(1:burnIn),])
+
+                                hdi_v <- hdi(taxa_post[[taxa]][-(1:burnIn),], credMass = cov_pro)
+                                lower_s[[taxa]] <- round(hdi_v[1], digits = 0)
+                                upper_s[[taxa]] <- round(hdi_v[2], digits = 0)
+                                b_int <- rgamma((itera-burnIn+1), shape = gammPrior[[sam]][[1]][taxa], rate = gammPrior[[sam]][[2]][taxa])
+
+                                hdi_b <- hdi(b_int, credMass = cov_pro)
+                                lower_b[[taxa]] <- round(hdi_b[1], digits = 0)
+                                upper_b[[taxa]] <- round(hdi_b[2], digits = 0)
+
+                                all_zero_nc[[taxa]] <-  gammPrior[[sam]][[5]][taxa]
+                                
+                        }
+
+
+                        df[[sam]] <- data.frame(Species = taxa_names(psPlByBlock[[blk]]),
+                                         xj = as.numeric(gammPrior[[sam]][[3]]),
+                                         l_s = unlist(lower_s),
+                                         u_s = unlist(upper_s),
+                                         l_b = unlist(lower_b),
+                                         u_b = unlist(upper_b),
+                                         all_zero_nc = unlist(all_zero_nc)
+                                         )
+
+                        df[[sam]] <- arrange(filter(df[[sam]], ((l_s > u_b)&(l_s>0))), desc(xj))
+
+
+                        if(dim(df[[sam]])[1]==0){
+                                df[[sam]] <- data.frame(Species="Negative",
+                                                 xj="Negative",
+                                                 l_s="Negative",
+                                                 u_s="Negative",
+                                                 l_b ="Negative",
+                                                 u_b="Negative",
+                                                 all_zero_nc = "Negative")
+                        }
+
+
+                        all_real_taxa[[sam]] <- as.character(df[[sam]]$Species)
+                       
+                }
+
+                all_real_taxa_lt[[blk]] <- all_real_taxa
+                
+                df_blk[[blk]] <- df
+        }
+
+```
+
+
+True ASVs identifed by BARBI in each dilution series sample
+```{r eval = FALSE}
+df
+```
+
+Number of TRUE ASVs in each dilution series sample
+```{r eval = FALSE}
+lapply(df, function(x){dim(x)})
+
+#View(df[[1]])
+
+# df2 <- lapply(df, function(x){mutate(x, Genus.spec = df.ASV$Genus.spec[which(as.character(x$Species) %in% as.character(df.ASV$ori.ASV))])})
+```
+
+
+Did BARBI identify all true ASVs?
+
+```{r eval = FALSE}
+performance <- lapply(as.list(c(seq(1,8))), function(x){
+  all(true.seq.all.samples[[x]] %in% as.character(df[[x]]$Species))
+})
+# all(as.character(df[[3]]$ASV) %in% true.seq.all.samples)
+performance
+
+```
+
+
+
+<!-- ASVs that have been identified as true ASVS because there is no reads in negative control samples? -->
+
+<!-- ```{r} -->
+<!-- lapply(as.list(c(seq(1,8))), function(x){ -->
+<!--   df[[x]]$Species[which(df[[x]]$all_zero_nc == "Yes")] -->
+<!-- }) -->
+
+<!-- ``` -->
+
+True ASvs (removing ASVs that are not in negative control samples)
+```{r eval = FALSE} 
+lapply(as.list(c(seq(1,8))), function(x){
+  dim(df[[x]])[1] - length(df[[x]]$Species[which(df[[x]]$all_zero_nc == "Yes")])
+})
+```
+
+True ASVs in all samples after removing ASVs that are identifed as true ASVs but they were not in any negative controls
+```{r eval = FALSE}
+true.ASV.all <- lapply(df, function(x){
+  as.character(x$Species[which(!(x$all_zero_nc == "Yes"))])
+})
+
+true.ASV.all <- unlist(true.ASV.all)
+true.ASV.all <- unique(true.ASV.all)
+true.ASV.all
+```
+
+```{r eval = FALSE}
+ps.true <- prune_taxa(true.ASV.all,ps)
+ps.true
+kable(otu_table(subset_samples(ps.true,SampleType=="Standard")) %>% data.frame())
+```
+
+### Histograms
+```{r}
+set.seed(10000)
+itera <- 10000
+cov_pro <- .95
+num_blks <- length(psByBlock)
+gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_Zymo_Dada2.rds")
+library(tidyr)
+blk <- 1
+gammaPrior_all_blks <- gammaPrior_posTrueSing_all_blocks[[1]]
+post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]]
+
+taxa_post_all_sam <- post_all_blocks[[blk]]
+gammPrior <- gammaPrior_all_blks[[blk]]
+
+
+sample.names <- sample_names(psPlByBlock[[blk]])
+
+for(j in 1: length(sample.names)){
+    desired.sample.name <- sample.names[j]
+    desired.sample.index <- which(sample_names(psPlByBlock[[blk]]) %in% desired.sample.name)
+    tax_interested <- rownames(sort(otu_table(psPlByBlock[[blk]])[,desired.sample.index],decreasing = TRUE))[c(1:16)]
+    tax_interested_ind <- which(as.character(taxa_names(psPlByBlock[[blk]])) %in% tax_interested)
+    tax_names <- taxa_names(psPlByBlock[[blk]])[tax_interested_ind]
+    tax_names <- df.ASV$ASV.Genus[which(as.character(df.ASV$ASV.Genus.Species) %in%  tax_names)]
+    
+    
+    taxa.post <- taxa_post_all_sam[[desired.sample.index]]
+    
+    burnIn <- 5001
+    signal.hist <- taxa.post[tax_interested_ind]
+    signal.hist <- lapply(signal.hist,function(x){x[-(1:burnIn),]})
+    signal.df <- data.frame(do.call("cbind", signal.hist))
+    colnames(signal.df) <- tax_names
+    signal.df$group <- rep("True",length=dim(signal.df)[1])
+    
+    bg <- list()
+    for(ind in 1:length(tax_interested_ind)){
+            bg[[ind]] <- rgamma(5000, shape=gammPrior[[desired.sample.index]][[1]][tax_interested_ind[ind]],rate = gammPrior[[desired.sample.index]][[2]][tax_interested_ind[ind]])
+    }
+    
+    bg.df <- data.frame(do.call("cbind",bg))
+    colnames(bg.df) <- tax_names
+    bg.df$group <- rep("Contaminant",length=dim(bg.df)[1])
+    
+    bg.signal <- rbind(signal.df, bg.df)
+    bg.signal$group <- as.factor(bg.signal$group)
+    bg_sig_long <- tidyr::gather(bg.signal,key="Taxa",value="Reads",1:(dim(bg.signal)[2]-1))
+    bg_sig_long$Taxa <- as.factor(bg_sig_long$Taxa)
+    
+    p <- ggplot(bg_sig_long, aes(x= Reads))+
+            geom_density(aes(y = ..scaled.., fill = group, color = group))+
+            facet_wrap(~Taxa,scales = "free")+
+            scale_fill_manual(values=c("blue","brown"))+
+            scale_color_manual(values=c("blue","brown"))+
+            ggtitle(desired.sample.name)+
+            theme(plot.title = element_text(hjust = 0.5), legend.title=element_blank(), strip.text.x = element_text(size=5),strip.background = element_blank(), panel.grid = element_blank()) + xlab("") + ylab("density")
+    
+    fileN <- paste0("Figures/",desired.sample.name,"_histogram",".eps")
+    ggsave(fileN, plot = p, width = 10, height = 5)
+}
+
+```
+
