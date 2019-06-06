@@ -3,6 +3,7 @@ LDA/*.zip
 LDA/Data/
 LDA/LDA_Gibbs/*.html
 LDA/LDA_VB_block_wise/Results/
+LDA/LDA_VB_block_wise/Data/
 LDA/LDA_VB_block_wise/*.html
 LDA/LDA_VB_each_sample/*.html
 LDA/LDA_VB_no_block_wise/*html
