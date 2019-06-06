@@ -1,5 +1,5 @@
 ---
-title: "ED data using LDA-STAN (Variational Bayes)"
+title: "LDA-VB (Variational Bayes) on ED data"
 author: "Pratheepa Jeganathan"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 output: 
@@ -9,7 +9,11 @@ output:
 
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 16, fig.height = 10)
+knitr::opts_chunk$set(echo = TRUE, 
+  message = FALSE, 
+  warning = FALSE, 
+  fig.width = 16, 
+  fig.height = 10)
 ```
 
 Loading packages
@@ -115,11 +119,12 @@ Each sample is modeled as having a mixture of topics, with each species drawn fr
 
 ### LDA on specimen and control samples
 
-- For each block, make a stan data.
 
 ```{r}
 f = stan_model(file = "lda.stan")
 ```
+
+For each block, make a stan data.
 
 ```{r}
 K = 6 # number of topics
@@ -136,6 +141,7 @@ stan.data.all.blocks = lapply(psByBlock, function(y){
 })
 ```
 
+Sample from posterior using variational Bayes.
 ```{r}
 stan.fit.all.blocks = lapply(stan.data.all.blocks, function(u){
   stan_fit = vb(f, 
@@ -149,7 +155,7 @@ stan.fit.all.blocks = lapply(stan.data.all.blocks, function(u){
 })
 
 
-saveRDS(stan.fit.all.blocks, file = "stan_fit_all_ED.rds")
+saveRDS(stan.fit.all.blocks, file = "./Results/stan_fit_all_ED.rds")
 ```
 
 ### Extract posterior samples
