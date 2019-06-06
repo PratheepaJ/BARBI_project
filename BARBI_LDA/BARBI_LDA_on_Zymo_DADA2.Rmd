@@ -1,7 +1,7 @@
 ---
-title: "Zymbo Mock Community Data Analysis (16S rRNA gene amplicon sequencing)"
-author: "Pratheepa Jeganathan, Henry Cheng"
-date: "2/4/2019"
+title: "Zymbo Mock Community Data Analysis (16S rRNA gene amplicon sequencing) using BARBI LDA"
+author: "Pratheepa Jeganathan"
+date: "04/23/2019"
 output: 
   html_document:
     toc: true
@@ -24,6 +24,7 @@ library(ggplot2)
 library(lda)
 library(magrittr)
 library(dplyr)
+library(reshape2)
 ```
 
 ```{r}
@@ -245,26 +246,16 @@ ps
 
 We identifed 142 ASVs not is any dilution series samples and they are classified as contaminants before using BARBI LDA.
 
-We use BARBI to infer true ASVs in each dilution series sample 
-
-Specify that the samples are on the columns and species are on the rows of `otu_table`. 
-
-Check the distribution of library depth to see whether there are samples with very small library sizes that should be dropped from the analysis.
-
-```{r filter-samples}
-if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
-totalReads <- colSums(otu_table(ps))
-hist(log(totalReads), yaxs="i", xaxs="i", main="Distribution of total reads per sample", breaks=50)
-```
-
   
 See a summary of the `Standard` and `Negative` samples in each block. 
 
 ```{r summary_stat}
 table(sample_data(ps)$SampleType, sample_data(ps)$block)
-colSums(otu_table(ps))
 ```
 
+```{r}
+colSums(otu_table(ps))
+```
 
 ###      Prepare the phyloseq object for the Bayesian inference
 
@@ -279,302 +270,149 @@ Select all species that have a prevalence of zero (i.e., have zero reads) in all
 Select all plasma samples from each block and store as a list of phyloseq objects, `psPlByBlock`.
 
 ```{r list_of_phyloseq}
-psBlockResult <- psBlockResults(ps, sampleTypeVar = "SampleType", caselevels = c("Standard"), controllevel="Negative", sampleName = "Name", blockVar = "block")
+source("psBlockResults.R")
+psBlockResult = psBlockResults(ps, 
+  sampleTypeVar = "SampleType", caselevels = c("Standard"), controllevel="Negative", sampleName = "Name", blockVar = "block")
 
-psByBlock <- psBlockResult[[1]]
-psNCbyBlock <- psBlockResult[[2]]
-psallzeroInNC <- psBlockResult[[3]]
-psPlByBlock <- psBlockResult[[4]]
+psByBlock = psBlockResult[[1]]
+psNCbyBlock = psBlockResult[[2]]
+psallzeroInNC = psBlockResult[[3]]
+psPlByBlock = psBlockResult[[4]]
 
-saveRDS(psByBlock,"./Results/psByBlock.rds")
+# st = sample_names(psByBlock[[1]])[-c(4:10)]
+# psByBlock[[1]] = subset_samples(psByBlock[[1]], SampleCode %in% st)
 ```
 
-##      Estimate the distribution parameters for the contamination reads in negative control samples
+## Make an LDA object
 
-Estimate the gamma distribution parameters for the contamination reads in negative control samples using the negative control samples for each block. 
-
-
-```{r estimate_Cont_ncontrols}
-alphaBetaNegControl <- alphaBetaNegControl(psNCbyBlock = psNCbyBlock, stringent = FALSE)
-```
-
-##      Estimate the distribution parameters for the contamination reads in each plasma sample
-
-For each dilution series sample, estimate the gamma distribution parameters for the contamination reads using the scaling property of the gamma distribution. This will give an estimate for the intensity of contamination reads in each dilution series sample.
-
-
-```{r estimate_Cont_plasma}
-num_blks <- length(alphaBetaNegControl)
-blks <- seq(1, num_blks) %>% as.list
-
-gammaPrior_all_blks <- lapply(blks, function(x){
-        gammaPrior <- alphaBetaContInPlasma(psPlByBlock = psPlByBlock, psallzeroInNC = psallzeroInNC, blk = x, alphaBetaNegControl = alphaBetaNegControl)
-        return(gammaPrior)
-})
-```
-
-
-##      Sampling from the marginal posterior for the number of true reads
-
-For all samples and for all taxa, sample from the marginal posterior of the number of true reads using the Metropolis-Hasting MCMC. Specifify the number of iterations in the MCMC using the option `itera`. 
-
-Save the estimated parameters for the gamma distribution for the contamination reads in each dilution series sample stored in `gammaPrior_all_blks`.
-
-The suggeseted itera is 10,000. 
-
-```{r posterior_sample, eval=FALSE}
-t1 <- proc.time()
-
-post_all_blocks <- lapply(blks,function(x){
-        post_int_all_taxa <- samplingPosterior(psPlByBlock = psPlByBlock,
-                blk = x,
-                gammaPrior_Cont = gammaPrior_all_blks[[x]],
-                itera = 10000,
-                ncores = ncores)
-        return(post_int_all_taxa)
-})
-
-proc.time()-t1
-
-
-gammaPrior_posTrueSing_all_blocks <- list(gammaPrior_all_blks,post_all_blocks)
-
-saveRDS(gammaPrior_posTrueSing_all_blocks, file= "./Results/gammaPrior_posTrueSing_Zymo_Dada2.rds")
-```
-
-
-###     Make summaires from the BARBI results.
-
-Choose the number of MCMC to be burned using the option `burnIn`.  It must be less than `itera`.
-
-Choose the coverage probability to construct the highest posterior density interval using the option `cov.pro`.
-
-ASVs are labeled as contaminants if the lower limit of the number of true reads is less than the upper limit of the number of contaminant reads. 
-
-
-```{r make_tables, eval=FALSE}
-set.seed(10000)
-itera <- 10000
-burnIn <- 5000
-cov_pro <- .95
-mak_tab <- TRUE # need to change to TRUE if you want to make tables
-#psByBlock <- readRDS("./Results_BARBI_8_28_18/psByBlock.rds")
-num_blks <- length(psByBlock)
-
-gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_Zymo_Dada2.rds")
-
-# gammaPrior_posTrueSing_all_blocks is a list that contains first element posterior samples, second element is the samples in negative controls and dilution series samples
-# 
-gammaPrior_all_blks <- gammaPrior_posTrueSing_all_blocks[[1]]
-post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]]
-
-
-all_real_taxa_lt <- list()
-
-df_blk <- list()
-
-for(blk in 1:num_blks){
-
-                taxa_post_all_sam <- post_all_blocks[[blk]]
-                gammPrior <- gammaPrior_all_blks[[blk]]
-
-                total_summary_table <- NULL
-
-                all_real_taxa <- list()
-                
-                df <- list()
-
-                for(sam in 1:nsamples(psPlByBlock[[blk]])){
-
-  
-                        taxa_post <- taxa_post_all_sam[[sam]]
-                        acceptance <- list() #  acceptance rate of MC sampling 
-                        exp_post_s <- list()
-                        lower_s <- list() # s true signal
-                        upper_s <- list()
-                        lower_b <- list() # b- contaminat
-                        upper_b <- list()
-                        all_zero_nc <- list()
-                        
-        
-                        for(taxa in 1:length(taxa_post)){
-                                
-                                burnIn  <- burnIn
-                                acceptance[[taxa]]  <-  1-mean(duplicated(taxa_post[[taxa]][-(1:burnIn),]))
-
-                                exp_post_s[[taxa]] <- mean(taxa_post[[taxa]][-(1:burnIn),])
-
-                                hdi_v <- hdi(taxa_post[[taxa]][-(1:burnIn),], credMass = cov_pro)
-                                lower_s[[taxa]] <- round(hdi_v[1], digits = 0)
-                                upper_s[[taxa]] <- round(hdi_v[2], digits = 0)
-                                b_int <- rgamma((itera-burnIn+1), shape = gammPrior[[sam]][[1]][taxa], rate = gammPrior[[sam]][[2]][taxa])
-
-                                hdi_b <- hdi(b_int, credMass = cov_pro)
-                                lower_b[[taxa]] <- round(hdi_b[1], digits = 0)
-                                upper_b[[taxa]] <- round(hdi_b[2], digits = 0)
-
-                                all_zero_nc[[taxa]] <-  gammPrior[[sam]][[5]][taxa]
-                                
-                        }
-
-
-                        df[[sam]] <- data.frame(Species = taxa_names(psPlByBlock[[blk]]),
-                                         xj = as.numeric(gammPrior[[sam]][[3]]),
-                                         l_s = unlist(lower_s),
-                                         u_s = unlist(upper_s),
-                                         l_b = unlist(lower_b),
-                                         u_b = unlist(upper_b),
-                                         all_zero_nc = unlist(all_zero_nc)
-                                         )
-
-                        df[[sam]] <- arrange(filter(df[[sam]], ((l_s > u_b)&(l_s>0))), desc(xj))
-
-
-                        if(dim(df[[sam]])[1]==0){
-                                df[[sam]] <- data.frame(Species="Negative",
-                                                 xj="Negative",
-                                                 l_s="Negative",
-                                                 u_s="Negative",
-                                                 l_b ="Negative",
-                                                 u_b="Negative",
-                                                 all_zero_nc = "Negative")
-                        }
-
-
-                        all_real_taxa[[sam]] <- as.character(df[[sam]]$Species)
-                       
-                }
-
-                all_real_taxa_lt[[blk]] <- all_real_taxa
-                
-                df_blk[[blk]] <- df
-        }
-
-```
-
-
-True ASVs identifed by BARBI in each dilution series sample
-```{r eval = FALSE}
-df
-```
-
-Number of TRUE ASVs in each dilution series sample
-```{r eval = FALSE}
-lapply(df, function(x){dim(x)})
-
-#View(df[[1]])
-
-# df2 <- lapply(df, function(x){mutate(x, Genus.spec = df.ASV$Genus.spec[which(as.character(x$Species) %in% as.character(df.ASV$ori.ASV))])})
-```
-
-
-Did BARBI identify all true ASVs?
-
-```{r eval = FALSE}
-performance <- lapply(as.list(c(seq(1,8))), function(x){
-  all(true.seq.all.samples[[x]] %in% as.character(df[[x]]$Species))
-})
-# all(as.character(df[[3]]$ASV) %in% true.seq.all.samples)
-performance
-
-```
-
-
-
-<!-- ASVs that have been identified as true ASVS because there is no reads in negative control samples? -->
-
-<!-- ```{r} -->
-<!-- lapply(as.list(c(seq(1,8))), function(x){ -->
-<!--   df[[x]]$Species[which(df[[x]]$all_zero_nc == "Yes")] -->
-<!-- }) -->
-
-<!-- ``` -->
-
-True ASvs (removing ASVs that are not in negative control samples)
-```{r eval = FALSE} 
-lapply(as.list(c(seq(1,8))), function(x){
-  dim(df[[x]])[1] - length(df[[x]]$Species[which(df[[x]]$all_zero_nc == "Yes")])
-})
-```
-
-True ASVs in all samples after removing ASVs that are identifed as true ASVs but they were not in any negative controls
-```{r eval = FALSE}
-true.ASV.all <- lapply(df, function(x){
-  as.character(x$Species[which(!(x$all_zero_nc == "Yes"))])
-})
-
-true.ASV.all <- unlist(true.ASV.all)
-true.ASV.all <- unique(true.ASV.all)
-true.ASV.all
-```
-
-```{r eval = FALSE}
-ps.true <- prune_taxa(true.ASV.all,ps)
-ps.true
-kable(otu_table(subset_samples(ps.true,SampleType=="Standard")) %>% data.frame())
-```
-
-### Histograms
+otu-table coluns to list (all dilution and negative control)
 ```{r}
-set.seed(10000)
-itera <- 10000
-cov_pro <- .95
-num_blks <- length(psByBlock)
-gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_Zymo_Dada2.rds")
-library(tidyr)
-blk <- 1
-gammaPrior_all_blks <- gammaPrior_posTrueSing_all_blocks[[1]]
-post_all_blocks <- gammaPrior_posTrueSing_all_blocks[[2]]
-
-taxa_post_all_sam <- post_all_blocks[[blk]]
-gammPrior <- gammaPrior_all_blks[[blk]]
-
-
-sample.names <- sample_names(psPlByBlock[[blk]])
-
-for(j in 1: length(sample.names)){
-    desired.sample.name <- sample.names[j]
-    desired.sample.index <- which(sample_names(psPlByBlock[[blk]]) %in% desired.sample.name)
-    tax_interested <- rownames(sort(otu_table(psPlByBlock[[blk]])[,desired.sample.index],decreasing = TRUE))[c(1:16)]
-    tax_interested_ind <- which(as.character(taxa_names(psPlByBlock[[blk]])) %in% tax_interested)
-    tax_names <- taxa_names(psPlByBlock[[blk]])[tax_interested_ind]
-    tax_names <- df.ASV$ASV.Genus[which(as.character(df.ASV$ASV.Genus.Species) %in%  tax_names)]
-    
-    
-    taxa.post <- taxa_post_all_sam[[desired.sample.index]]
-    
-    burnIn <- 5001
-    signal.hist <- taxa.post[tax_interested_ind]
-    signal.hist <- lapply(signal.hist,function(x){x[-(1:burnIn),]})
-    signal.df <- data.frame(do.call("cbind", signal.hist))
-    colnames(signal.df) <- tax_names
-    signal.df$group <- rep("True",length=dim(signal.df)[1])
-    
-    bg <- list()
-    for(ind in 1:length(tax_interested_ind)){
-            bg[[ind]] <- rgamma(5000, shape=gammPrior[[desired.sample.index]][[1]][tax_interested_ind[ind]],rate = gammPrior[[desired.sample.index]][[2]][tax_interested_ind[ind]])
-    }
-    
-    bg.df <- data.frame(do.call("cbind",bg))
-    colnames(bg.df) <- tax_names
-    bg.df$group <- rep("Contaminant",length=dim(bg.df)[1])
-    
-    bg.signal <- rbind(signal.df, bg.df)
-    bg.signal$group <- as.factor(bg.signal$group)
-    bg_sig_long <- tidyr::gather(bg.signal,key="Taxa",value="Reads",1:(dim(bg.signal)[2]-1))
-    bg_sig_long$Taxa <- as.factor(bg_sig_long$Taxa)
-    
-    p <- ggplot(bg_sig_long, aes(x= Reads))+
-            geom_density(aes(y = ..scaled.., fill = group, color = group))+
-            facet_wrap(~Taxa,scales = "free")+
-            scale_fill_manual(values=c("blue","brown"))+
-            scale_color_manual(values=c("blue","brown"))+
-            ggtitle(desired.sample.name)+
-            theme(plot.title = element_text(hjust = 0.5), legend.title=element_blank(), strip.text.x = element_text(size=5),strip.background = element_blank(), panel.grid = element_blank()) + xlab("") + ylab("density")
-    
-    fileN <- paste0("Figures/",desired.sample.name,"_histogram",".eps")
-    ggsave(fileN, plot = p, width = 10, height = 5)
+ot = otu_table(psByBlock[[1]]) %>% data.frame
+make.lda = list()
+for(i in 1:dim(ot)[2]){
+  df.i = data.frame(ASV = seq(0, (length(ot[,i])-1)), cout = ot[,i]) 
+  df.i = filter(df.i, cout > 0) %>% as.matrix
+  colnames(df.i) = NULL
+  make.lda[[i]] = t(df.i)
 }
 
+taxa.name = taxa_names(psByBlock[[1]])
 ```
 
+```{r}
+theme_set(theme_bw())
+
+set.seed(8675309)
+
+K <- 10 ## Num clusters
+
+N = nsamples(psByBlock[[1]])
+
+result <- lda.collapsed.gibbs.sampler(make.lda,
+                                       K,  ## Num clusters
+                                       taxa.name,
+                                       25,  ## Num iterations
+                                       0.1,
+                                       0.1,
+                                       compute.log.likelihood=TRUE) 
+
+df = result$document_sums %>% data.frame #A K \times D matrix where each entry is an integer indicating the number of times words in each document (column) were assigned to each topic (column).
+colnames(df) = sample_names(psByBlock[[1]])
+
+rownames(df) = paste0("Communtiy ", seq(1, dim(df)[1]))
+#View(df)
+
+top.species.in.each.topic = top.topic.words(result$topics, 12, by.score = TRUE)
+colnames(top.species.in.each.topic) = paste0("Communtiy ", seq(1, dim(top.species.in.each.topic)[2]))
+
+topic.proportions <- t(result$document_sums) / colSums(result$document_sums) # sample by topic matrix
+
+# colnames(topic.proportions) <- apply(top.species.in.each.topic, 2, paste, collapse=" ")
+colnames(topic.proportions) = paste0("Communtiy ", seq(1, dim(top.species.in.each.topic)[2]))
+rownames(topic.proportions) = sample_names(psByBlock[[1]])
+
+#View(topic.proportions)
+
+topic.proportions.df <- melt(cbind(data.frame(topic.proportions), sampleID = factor(sample_names(psByBlock[[1]]))), variable.name="topic", id.vars = "sampleID")  
+
+# ggplot(data = topic.proportions.df, aes(x = topic), fill = document) + geom_bar() + coord_flip() +
+#   facet_wrap(~ document, ncol=5)
+ggplot(topic.proportions.df, aes(x=topic, y=value, fill=sampleID), ylab="proportion") +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle=90, hjust=1)) +
+  coord_flip() +
+  facet_wrap(~ sampleID, ncol=5) +
+  guides(fill =FALSE) + xlab("Communtiy") +
+  ylab("Community proportion")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+otu-table coluns to list (only negative controls)
+```{r}
+ot = otu_table(psNCbyBlock[[1]]) %>% data.frame
+make.lda = list()
+for(i in 1:dim(ot)[2]){
+  df.i = data.frame(ASV = seq(0, (length(ot[,i])-1)), cout = ot[,i]) 
+  df.i = filter(df.i, cout > 0) %>% as.matrix
+  colnames(df.i) = NULL
+  make.lda[[i]] = t(df.i)
+}
+
+taxa.name = taxa_names(psByBlock[[1]])
+```
+
+```{r}
+theme_set(theme_bw())
+
+set.seed(8675309)
+
+K <- 10 ## Num clusters
+
+result.neg.cont <- lda.collapsed.gibbs.sampler(make.lda,
+                                       K,  ## Num clusters
+                                       taxa.name,
+                                       25,  ## Num iterations
+                                       0.1,
+                                       0.1,
+                                       compute.log.likelihood=TRUE) 
+
+df.nc = result.neg.cont$document_sums %>% data.frame #A K \times D matrix where each entry is an integer indicating the number of times words in each document (column) were assigned to each topic (column).
+colnames(df.nc) = sample_names(psNCbyBlock[[1]])
+
+#View(df.nc)
+
+top.species.in.each.topic.nc = top.topic.words(result.neg.cont$topics, 2, by.score = TRUE)
+
+topic.proportions.nc <- t(result.neg.cont$document_sums) / colSums(result.neg.cont$document_sums) # sample by topic matrix
+
+# colnames(topic.proportions) <- apply(top.species.in.each.topic, 2, paste, collapse=" ")
+colnames(topic.proportions.nc) = paste0("Communtiy ", seq(1, dim(top.species.in.each.topic.nc)[2]))
+
+rownames(topic.proportions.nc) = sample_names(psNCbyBlock[[1]])
+
+#View(topic.proportions.nc)
+
+topic.proportions.df.nc <- melt(cbind(data.frame(topic.proportions.nc), sampleID = factor(sample_names(psNCbyBlock[[1]]))), variable.name="topic", id.vars = "sampleID")  
+
+
+# ggplot(data = topic.proportions.df, aes(x = topic), fill = document) + geom_bar() + coord_flip() +
+#   facet_wrap(~ document, ncol=5)
+ggplot(topic.proportions.df.nc, aes(x=topic, y=value, fill=sampleID), ylab="proportion") +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle=90, hjust=1)) +
+  coord_flip() +
+  facet_wrap(~ sampleID, ncol=5) +
+  guides(fill =FALSE) + xlab("Communtiy") +
+  ylab("Community proportion")
+```
