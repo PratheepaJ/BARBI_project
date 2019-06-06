@@ -28,6 +28,10 @@ library(magrittr)
 library(dplyr)
 library(reshape2)
 library(rstan)
+library(RColorBrewer)
+library(wesanderson)
+#devtools::install_github("jakobbossek/ggheatmap")
+library(ggheatmap)
 ```
 
 
@@ -231,8 +235,6 @@ stan.data <- list(K = K,
 )
 ```
 
-
-
 ```{r}
 stan.fit = vb(f, 
   data = stan.data, 
@@ -244,17 +246,18 @@ stan.fit = vb(f,
 saveRDS(stan.fit, file = "./Results/stan_vb_Zymo.rds")
 ```
 
+### Extract posterior samples 
+- $\beta$ and $\theta$
 ```{r}
-samples <- rstan::extract(stan_fit)
+samples <- rstan::extract(stan.fit)
 ```
 
-### Posterior distirbution of topic in each  sample
+### Posterior distirbution of topic in each sample 
+- $\theta$ for each sample
 ```{r}
 theta = samples$theta # chain * sample * topic
 # find theta distirbution of each topic in each sample
 names(theta) = c("theta", "Sample", "Topic")
-
-library(reshape2)
 theta.all = melt(theta)
 colnames(theta.all) = c("Chain", "Sample", "Topic", "topic.dis")
 theta.all$Sample = factor(theta.all$Sample)
@@ -268,11 +271,9 @@ theta.all =  mutate(theta.all, Group = ifelse(substr(Sample,1,1)=="D","Dilution"
 theta.all$Group = factor(theta.all$Group)
 ```
 
-Plot topic distribution in each sample 
+### Plot topic distribution in each sample 
 ```{r}
-library(RColorBrewer)
-library(wesanderson)
-col.topic = c(wes_palette("Cavalcanti1", n = 5), wes_palette("Darjeeling1", n = 5))
+col.topic = c(wes_palette("Cavalcanti1", n = 3), wes_palette("Darjeeling1", n = 2))
 ggplot() + 
   geom_density(data = theta.all ,aes(x = topic.dis, y = ..scaled.., col = Topic, fill=Topic)) + 
   facet_grid(Sample ~ Group, scales = "fixed") + 
@@ -281,9 +282,10 @@ ggplot() +
   ylab("density") +
   xlab("Topic distirbution") + 
   ggtitle("Topic distribution in each sample") + 
-  theme(plot.title = element_text(hjust = 0.5), strip.text.y= element_text(size = 8))
+  theme(plot.title = element_text(hjust = 0.5, size = 15), strip.text.y= element_text(size = 12), strip.text.x = element_text(size = 12))
 ```
 
+Topics 2 and 3 contains most of real species (green and red). Topic 4 is mix of both real and contaminant species. Topics 1, 3, and 5 are contaminant species.
 
 ### ASV distribution in each topic
 ```{r}
@@ -294,12 +296,9 @@ beta.all$Topic = factor(beta.all$Topic)
 levels(beta.all$Topic) = c(paste0("Topic_", seq(1,K)))
 beta.all$ASV = factor(beta.all$ASV)
 levels(beta.all$ASV) = df.ASV$ASV.Genus
-
 ```
 
 ```{r}
-#devtools::install_github("jakobbossek/ggheatmap")
-library(ggheatmap)
 ggheatmap(
   beta.all %>%
   group_by(Topic, ASV) %>%
@@ -308,11 +307,11 @@ ggheatmap(
   id.vars = c("ASV", "Topic"),
   value.name = "median_beta"
 ) + ggtitle("ASV distribution in each topic") + 
-  theme(plot.title = element_text(hjust = 0.5))
+  theme(plot.title = element_text(hjust = 0.5, size = 12), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12))
 ```
 
 ###  Can we look at the ASV distribution in each topic in the following way?
-```{r }
+```{r include = FALSE, eval=FALSE}
 ### Posterior distirbution of ASV in each topic
 beta = samples$beta
 beta.all = melt(beta)
@@ -324,7 +323,7 @@ levels(beta.all$ASV) = df.ASV$ASV.Genus
 ```
 
 
-```{r }
+```{r include = FALSE, eval=FALSE}
 ggplot() + 
   geom_density(data = beta.all ,aes(x = ASV.distribution, y = ..scaled.., col = Topic, fill = Topic)) + 
   facet_wrap(~ASV, scales = "fixed") + 
@@ -335,3 +334,5 @@ ggplot() +
   ggtitle("ASV distribution in each topic") + 
   theme(plot.title = element_text(hjust = 0.5), strip.text.x= element_text(size = 6)) 
 ```
+
+### Topic distrirbution summary in negative controls
