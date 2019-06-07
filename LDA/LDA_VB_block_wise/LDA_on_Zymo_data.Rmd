@@ -210,7 +210,7 @@ Each sample is modeled as having a mixture of topics, with each ASV drawn from a
 
 ### LDA on specimen and control samples
 
-We choose the numebr of topics to be 4.
+We choose the number of topics to be 4.
 
 Read stan model
 ```{r}
@@ -289,7 +289,8 @@ ggplot() +
   theme(plot.title = element_text(hjust = 0.5, size = 15), strip.text.y= element_text(size = 12), strip.text.x = element_text(size = 12))
 ```
 
-We chose four topics because two topics always dominated in dilution series samples. When we chose three topics, one of the topics dominated in dilution series sample is also dominated in control sample. Topic 1 is contaminant topic because it's only dominated in control samples. Topic 3 is also a contaminant topic because $\theta$ distribution range is less than .25 in all dilution samples. Topic 2 is real species topic because it is highly dominated in dilution series samples. Topic 4 is mix of mostly real and some contribution from contaminant species.
+We chose four topics because two topics always dominated in dilution series samples. 
+<!-- When we chose three topics, one of the topics dominated in dilution series sample is also dominated in control sample. Topic 1 is contaminant topic because it's only dominated in control samples. Topic 3 is also a contaminant topic because $\theta$ distribution range is less than .25 in all dilution samples. Topic 2 is real species topic because it is highly dominated in dilution series samples. Topic 4 is mix of mostly real and some contribution from contaminant species. -->
 
 ### ASV distribution in each topic
 ```{r}
