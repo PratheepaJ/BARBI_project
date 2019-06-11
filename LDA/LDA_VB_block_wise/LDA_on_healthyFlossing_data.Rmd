@@ -114,15 +114,16 @@ f = stan_model(file = "lda.stan")
 ```
 
 ```{r}
-K = 10 # number of topics
-stan.data.all.blocks = lapply(psByBlock, function(y){
+K = as.list(c(4,3)) # number of topics
+stan.data.all.blocks = lapply(as.list(1:2), function(i){
+  y = psByBlock[[i]]
   x = t(get_taxa(y))
   dimnames(x) = NULL
-  stan_data = list(K = K, 
+  stan_data = list(K = K[[i]], 
     V = ncol(x), 
     D = nrow(x), 
     n = x, 
-    alpha = rep(1, K), 
+    alpha = rep(1, K[[i]]), 
     gamma = rep(0.5, ncol(x)))
   return(stan_data)
 })
@@ -140,7 +141,7 @@ stan.fit.all.blocks = lapply(stan.data.all.blocks, function(u){
 })
 
 
-saveRDS(stan.fit.all.blocks, file = "stan_fit_all_HF.rds")
+saveRDS(stan.fit.all.blocks, file = "./Results/stan_fit_all_HF.rds")
 ```
 
 ### Extract posterior samples
@@ -152,7 +153,8 @@ samples.all.blocks <- lapply(stan.fit.all.blocks, function(x){
 
 ### Posterior distirbution of topic in each sample in each block
 ```{r}
-theta.all.blocks = lapply(samples.all.blocks, function(x){
+theta.all.blocks = lapply(as.list(1:2), function(i){
+  x = samples.all.blocks[[i]]
   theta = x$theta # chain * sample * topic
   # find theta distirbution of each topic in each sample
   names(theta) = c("theta", "Sample", "Topic")
@@ -161,7 +163,7 @@ theta.all.blocks = lapply(samples.all.blocks, function(x){
   theta.all$Sample = factor(theta.all$Sample)
   #levels(theta.all$Sample) = sample_names(ps)
   theta.all$Topic = factor(theta.all$Topic)
-  levels(theta.all$Topic) = c(paste0("Topic_", seq(1,K)))
+  levels(theta.all$Topic) = c(paste0("Topic_", seq(1,K[[i]])))
   return(theta.all)
 })
 
@@ -178,7 +180,8 @@ for(i in 1:2){
 col.topic = c(wes_palette("Cavalcanti1", n = 5), wes_palette("Darjeeling1", n = 5)) # sum of two n's should be equal to K.
 
 p.all.blocks = lapply(theta.all.blocks, function(u){
-  sel.samples  = unique(u$Sample)[1:20]
+  sel.samples = c(as.character(unique(u$Sample[(u$Group == "Control")])), as.character(unique(u$Sample[(u$Group == "Plasma")])[10:19]))
+  #sel.samples  = unique(u$Sample)[1:20]
   u = filter(u, Sample %in% sel.samples)
   #u = filter(u, Sample %in% c(sample_names(psByBlock[[1]])[1:20])) # this is to make only few sample plots
   p = ggplot() + 
@@ -192,10 +195,10 @@ p.all.blocks = lapply(theta.all.blocks, function(u){
     scale_color_manual(values = col.topic) + 
     scale_fill_manual(values = col.topic) + 
     ylab("density") +
-    xlab("Topic distirbution") + 
-    ggtitle("Topic distribution in each sample") + 
-    theme(plot.title = element_text(hjust = 0.5), 
-      strip.text.y= element_text(size = 6, angle = 360), strip.text.x = element_text(size  = 8))
+    xlab("") + 
+    ggtitle("") + 
+    theme(plot.title = element_text(hjust = 0.5, size =12), 
+      strip.text.y= element_text(size = 12, angle = 360), strip.text.x = element_text(size  = 12))
   return(p)
 })
 
@@ -203,21 +206,24 @@ p.all.blocks = lapply(theta.all.blocks, function(u){
 
 ```{r}
 p.all.blocks[[1]]
+ggsave("./Figures/LDA_HF_set1.eps", plot = p.all.blocks[[1]], width = 12, height = 16)
 ```
 
 ```{r}
 p.all.blocks[[2]]
+ggsave("./Figures/LDA_HF_set2.eps", plot = p.all.blocks[[2]], width = 12, height = 16)
 ```
 `
 
 ### Posterior ASV distribution in each topic in each block
 ```{r}
-beta.all.blocks = lapply(samples.all.blocks, function(x){
+beta.all.blocks = lapply(as.list(1:2), function(i){
+  x = samples.all.blocks[[i]]
   beta = x$beta
   beta.all = melt(beta)
   colnames(beta.all) = c("Chain", "Topic", "ASV", "ASV.distribution")
   beta.all$Topic = factor(beta.all$Topic)
-  levels(beta.all$Topic) = c(paste0("Topic_", seq(1,K)))
+  levels(beta.all$Topic) = c(paste0("Topic_", seq(1,K[[i]])))
   beta.all$ASV = factor(beta.all$ASV)
   return(beta.all)
 })
@@ -230,8 +236,6 @@ for(i in 1:2){
 
 ### Plot MAP of ASV in each topic in each block.
 ```{r}
-#devtools::install_github("jakobbossek/ggheatmap")
-#
 heatmap.map.theta.blocks = lapply(beta.all.blocks, function(x){
   #sel.spec = as.character(unique(x$ASV)[1:50])
   #x = filter(x, ASV %in% sel.spec)
@@ -263,8 +267,8 @@ heatmap.map.theta.blocks[[2]]
 ```
 
 
-###  Can we look at the ASV distribution in each topic in the following way?
-```{r }
+<!-- ###  Can we look at the ASV distribution in each topic in the following way? -->
+```{r include=FALSE, eval=FALSE}
 # ### Posterior distirbution of ASV in each topic in block
 # beta.all.blocks = lapply(samples.all.blocks, function(x){
 #   beta = x$beta
@@ -283,7 +287,7 @@ heatmap.map.theta.blocks[[2]]
 ```
 
 
-```{r }
+```{r include=FALSE, eval=FALSE}
 post.dis.each.topic.in.each.species = lapply(beta.all.blocks, function(y){
   # sel.spec = c(as.character(unique(y$ASV)[1:20]), "s__Pseudomonas_antarctica", "s__Clostridium_formicaceticum", "s__Cuprivavidus_gilardii")
   sel.spec = c("s__Pseudomonas_antarctica", "s__Clostridium_formicaceticum", "s__Cupriavidus_gilardii", "s__Human_herpesvirus_7", "s__Actinomyces_oris")
@@ -308,14 +312,14 @@ post.dis.each.topic.in.each.species = lapply(beta.all.blocks, function(y){
 
 ```
 
-```{r}
+```{r include=FALSE, eval=FALSE}
 post.dis.each.topic.in.each.species[[1]]
 ```
 
 
 
-```{r}
+```{r include=FALSE, eval=FALSE}
 post.dis.each.topic.in.each.species[[2]]
 ```
 
-<!-- If there are contaminant speceis that were still present after using BARBI, we can use LDA to determine the topic that those species belongs to. This will help to remove more contaminant species. -->
+<!-- If there are contaminant species that were still present after using BARBI, we can use LDA to determine the topic that those species belongs to. This will help to remove more contaminant species. -->

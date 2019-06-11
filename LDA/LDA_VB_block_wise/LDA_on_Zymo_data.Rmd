@@ -278,19 +278,24 @@ theta.all$Group = factor(theta.all$Group)
 ### Plot topic distribution in each sample 
 ```{r}
 col.topic = c(wes_palette("Cavalcanti1", n = 2), wes_palette("Darjeeling1", n = 2))
-ggplot() + 
+p = ggplot() + 
   geom_density(data = theta.all ,aes(x = topic.dis, y = ..scaled.., col = Topic, fill=Topic)) + 
   facet_grid(Sample ~ Group, scales = "fixed") + 
   scale_color_manual(values = col.topic)+
   scale_fill_manual(values = col.topic)+
   ylab("density") +
-  xlab("Topic distribution") + 
-  ggtitle("Topic distribution in each sample") + 
+  xlab("") + 
+  ggtitle("") + 
   theme(plot.title = element_text(hjust = 0.5, size = 15), strip.text.y= element_text(size = 12), strip.text.x = element_text(size = 12))
 ```
 
 We chose four topics because two topics always dominated in dilution series samples. 
 <!-- When we chose three topics, one of the topics dominated in dilution series sample is also dominated in control sample. Topic 1 is contaminant topic because it's only dominated in control samples. Topic 3 is also a contaminant topic because $\theta$ distribution range is less than .25 in all dilution samples. Topic 2 is real species topic because it is highly dominated in dilution series samples. Topic 4 is mix of mostly real and some contribution from contaminant species. -->
+
+```{r}
+p
+ggsave("./Figures/LDA_Zymo.eps", plot = p, width = 12, height = 16)
+```
 
 ### ASV distribution in each topic
 ```{r}
@@ -315,7 +320,7 @@ ggheatmap(
   theme(plot.title = element_text(hjust = 0.5, size = 12), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12)) 
 ```
 
-###  Can we look at the ASV distribution in each topic in the following way?
+<!-- ###  Can we look at the ASV distribution in each topic in the following way? -->
 ```{r include = FALSE, eval=FALSE}
 ### Posterior distirbution of ASV in each topic
 beta = samples$beta
