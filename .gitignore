@@ -1,9 +1,11 @@
 .Rhistory
+BARBI_manuscript_SIRS/.Rhistory
+BARBI_manuscript_hf/.Rhistory
 BARBI_decontam_data/
 LDA/*.html
 LDA/*.zip
 LDA/Data/
-LDA/LDA_Gibbs/*.html
+LDA/LDA_Gibbs/
 LDA/LDA_VB_block_wise/Results/
 LDA/LDA_VB_block_wise/Data/
 LDA/LDA_VB_block_wise/*.html
