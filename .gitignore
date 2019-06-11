@@ -35,6 +35,7 @@ Zymo_Analysis/BARBI_Zymo_Dada2/Data/
 Zymo_Analysis/BARBI_Zymo_Dada2/Figures/
 Zymo_Analysis/BARBI_Zymo_Dada2/Results/
 Zymo_Analysis/BARBI_Zymo_Dada2/*.html
+Zymo_Analysis/BARBI_Zymo_Dada2/*.sbatch
 Zymo_Analysis/BARBI_Zymo_Dada2/.Rhistory
 Zymo_Analysis/BARBI_Zymo_Uclust/
 Zymo_Analysis/Zymo_Dada2_pipeline/Data/
