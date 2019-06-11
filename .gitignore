@@ -18,7 +18,7 @@ BARBI_manuscript_hf/Data/
 BARBI_manuscript_hf/Figures/
 BARBI_manuscript_hf/Results/
 BARBI_manuscript_hf/*.html
-BARBI_manuscript_hf/*.sbtach
+BARBI_manuscript_hf/*.sbatch
 BARBI_manuscript_SIRS/Figures/
 BARBI_manuscript_SIRS/Data/
 BARBI_manuscript_SIRS/Results/
