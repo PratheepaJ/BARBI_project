@@ -12,6 +12,7 @@ LDA/LDA_VB_block_wise/*.html
 LDA/LDA_VB_each_sample/
 LDA/LDA_VB_no_block_wise/*html
 LDA/LDA_VB_no_block_wise/Results/
+LDA/LDA_VB_no_block_wise/Data/
 LDA/LDA_workflow/
 LDA/STAN_exercise/
 BARBI_manuscript_hf/Data/
