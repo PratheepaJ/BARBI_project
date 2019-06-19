@@ -206,8 +206,8 @@ psPlByBlock = psBlockResult[[4]]
 
 ## median-of-ratios for each block
 ```{r}
-lambda.blks = lapply(as.list(seq(1,3)), function(x){
-    x = psByBlock[[1]]
+lambda.blks = lapply(as.list(seq(1,1)), function(i){
+    x = psByBlock[[i]]
     if (dim(otu_table(x))[2] != nsamples(x)) {
             otu_table(x) = t(otu_table(x))
         }
@@ -245,12 +245,12 @@ We choose the number of topics to be 4.
 
 Read stan model
 ```{r}
-f <- stan_model(file = "lda_lib_dep_corr.stan")
+f = stan_model(file = "lda_lib_dep_corr.stan")
 ```
 
 Make stan data
-```{r}
-K = 3 # number of topics
+```{r eval=FALSE}
+K = 4 # number of topics
 ps = psByBlock[[1]] 
 short.sample.names = c(paste0("NC.", c(1,10)), paste0("Di.", seq(1,8)), paste0("NC.", seq(2,9)))
 sample_names(ps) = short.sample.names
@@ -309,7 +309,7 @@ theta.all$Group = factor(theta.all$Group)
 
 ### Plot topic distribution in each sample 
 ```{r}
-col.topic = c(wes_palette("Cavalcanti1", n = 2), wes_palette("Darjeeling1", n = 1))
+col.topic = c(wes_palette("Cavalcanti1", n = 2), wes_palette("Darjeeling1", n = 2))
 p = ggplot() + 
   geom_density(data = theta.all ,aes(x = topic.dis, y = ..scaled.., col = Topic, fill=Topic)) + 
   facet_grid(Sample ~ Group, scales = "fixed") + 
@@ -321,7 +321,7 @@ p = ggplot() +
   theme(plot.title = element_text(hjust = 0.5, size = 15), strip.text.y= element_text(size = 12), strip.text.x = element_text(size = 12))
 ```
 
-We chose three topics because one topic always dominated in dilution series samples. 
+We chose four topics because two topic always dominated in dilution series samples. 
 <!-- When we chose three topics, one of the topics dominated in dilution series sample is also dominated in control sample. Topic 1 is contaminant topic because it's only dominated in control samples. Topic 3 is also a contaminant topic because $\theta$ distribution range is less than .25 in all dilution samples. Topic 2 is real species topic because it is highly dominated in dilution series samples. Topic 4 is mix of mostly real and some contribution from contaminant species. -->
 
 ```{r}

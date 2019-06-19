@@ -1,0 +1,388 @@
+---
+title: "LDA-VB (Variational Bayes) on ED data"
+author: "Pratheepa Jeganathan"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+  message = FALSE, 
+  warning = FALSE, 
+  fig.width = 16, 
+  fig.height = 12)
+```
+
+Loading packages
+```{r}
+library(phyloseq)
+library(ggplot2)
+library(magrittr)
+library(dplyr)
+library(reshape2)
+library(rstan)
+library(RColorBrewer)
+library(wesanderson)
+library(ggheatmap)
+library(DESeq2)
+```
+
+
+### Read phyloseq and exploratory analysis
+
+```{r eval=FALSE, include=FALSE}
+ps = readRDS("./Data/ps_sirs_updated_may_1_2018.rds")
+ps
+if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
+ps = subset_samples(ps, !(Sample_Type == "Library_Control"))
+mapp = readxl::read_excel("./Data/Pt_and_P.xlsx")
+sample_names(ps)[which(sample_names(ps) %in% mapp$P)] = mapp$Pt
+sample_data(ps)$SampleCode = sample_names(ps)
+
+ps = subset_samples(ps, !(SampleType == "Healthy"))
+saveRDS(ps, "./Data/ps_ED.rds")
+```
+
+```{r}
+ps = readRDS("./Data/ps_ED.rds")
+
+set1 = c("1","2","3","4","11","12")
+set2 = c("5","6","7","8","9","10")
+setP = "P"
+ext.num = sample_data(ps)$Extraction_Number
+
+blocks = ifelse(ext.num %in% set1, "Set1", ifelse(ext.num %in% set2, "Set2","SetP"))
+
+sample_data(ps)$block = blocks
+sample_data(ps)$block = factor(sample_data(ps)$block)
+
+if(dim(otu_table(ps))[1]!=ntaxa(ps)){
+  otu_table(ps) = t(otu_table(ps))
+}
+
+```
+
+Identify the species that are not present in at least one `Sample_Type == Plasma` sample and removed them from the phyloseq object. Label these species as contaminants. 
+
+```{r filter_taxa}
+ps = prune_taxa(taxa_sums(ps) > 0, ps)
+ps.standard = subset_samples(ps, Sample_Type %in% c("Plasma"))
+prevTaxaP = apply(otu_table(ps.standard), 1, function(x){sum(x>0)})
+
+Contaminants1 = names(prevTaxaP)[prevTaxaP == 0]
+length(Contaminants1)
+```
+
+```{r}
+ps = prune_taxa(prevTaxaP > 0, ps)
+ps
+```
+
+We identifed 369 species not in any plasma samples and they are classified as contaminants before using BARBI LDA (VB).
+  
+See a summary of the `plasma` and `control` samples in each block. 
+
+```{r summary_stat}
+table(sample_data(ps)$Sample_Type, sample_data(ps)$block)
+```
+
+
+###      Prepare the phyloseq object for the Bayesian inference
+
+We use Bayesian inference to identify contaminants in each block separately to account for the batch-effects of contamination. 
+
+Thus, split the phyloseq object into multiple phyloseq objects corresponding to each block, and store the phyloseq objects as a list of phyloseq objects, `psByBlock`. 
+
+Select negative control samples from each block and store as a list of phyloseq objects, `psNCbyBlock`. 
+
+Select all species that have a prevalence of zero (i.e., have zero reads) in all negative control samples for each block and store as a list of phyloseq objects, `psallzeroInNC`.
+
+Select all plasma samples from each block and store as a list of phyloseq objects, `psPlByBlock`.
+
+```{r list_of_phyloseq}
+source("psBlockResults.R")
+psBlockResult = psBlockResults(ps, 
+  sampleTypeVar = "Sample_Type", caselevels = c("Plasma"), controllevel="Control", sampleName = "SampleCode", blockVar = "block")
+
+psByBlock = psBlockResult[[1]]
+psNCbyBlock = psBlockResult[[2]]
+psallzeroInNC = psBlockResult[[3]]
+psPlByBlock = psBlockResult[[4]]
+```
+
+
+## median-of-ratios for each block
+```{r}
+lambda.blks = lapply(as.list(seq(1,3)), function(i){
+    x = psByBlock[[i]]
+    if (dim(otu_table(x))[2] != nsamples(x)) {
+            otu_table(x) = t(otu_table(x))
+        }
+    ot = otu_table(x) %>% data.frame %>% as.matrix
+    
+    geo_mean = function(x) {
+            if(all(x == 0)){
+                val = 0
+            }else{
+                val = exp(sum(log(x[x > 0]))/length(x))
+            }
+            return(val)
+    }
+    
+    geom_mean_row = apply(ot, 1, FUN = geo_mean)
+    
+    sj = estimateSizeFactorsForMatrix(ot, median, geoMeans = geom_mean_row)
+    
+    ot_col_sum = colSums(ot)
+    ot_col_sum_new  = as.matrix(ot_col_sum) * as.matrix(sj)
+    lambda = as.numeric(round(ot_col_sum_new, digits = 0)[,1])
+    return(lambda)
+})
+
+```
+
+## LDA using VB
+
+Each sample is modeled as having a mixture of topics, with each species drawn from a topic based on mixing proportions.
+
+
+### LDA on specimen and control samples
+
+
+```{r}
+f = stan_model(file = "lda_lib_dep_corr.stan")
+```
+
+For each block, make a stan data.
+
+```{r}
+K = as.list(c(5,4,3)) # number of topics
+stan.data.all.blocks = lapply(as.list(1:3), function(i){
+  y = psByBlock[[i]]
+  x = t(get_taxa(y))
+  dimnames(x) = NULL
+  stan_data = list(K = K[[i]], 
+    V = ncol(x), 
+    D = nrow(x), 
+    n = x, 
+    alpha = rep(1, K[[i]]), 
+    gamma = rep(0.5, ncol(x)),
+    lambda = lambda.blks[[i]])
+  return(stan_data)
+})
+```
+
+Sample from posterior using variational Bayes.
+```{r}
+stan.fit.all.blocks = lapply(stan.data.all.blocks, function(u){
+  stan_fit = vb(f, 
+    data = u, 
+    output_samples = 100, 
+    eta = 1, 
+    adapt_engaged = FALSE,
+    seed = 234
+)
+  return(stan_fit)
+})
+
+
+saveRDS(stan.fit.all.blocks, file = "./Results/stan_fit_all_ED_lib_corr.rds")
+```
+
+
+```{r}
+stan.fit.all.blocks = readRDS(file = "./Results/stan_fit_all_ED_lib_corr.rds")
+```
+
+### Extract posterior samples
+```{r}
+samples.all.blocks <- lapply(stan.fit.all.blocks, function(x){
+  rstan::extract(x)
+})
+```
+
+### Posterior distirbution of topic in each sample in each block
+```{r}
+theta.all.blocks = lapply(as.list(1:3), function(i){
+  x = samples.all.blocks[[i]]
+  theta = x$theta # chain * sample * topic
+  # find theta distirbution of each topic in each sample
+  names(theta) = c("theta", "Sample", "Topic")
+  theta.all = melt(theta)
+  colnames(theta.all) = c("Chain", "Sample", "Topic", "topic.dis")
+  theta.all$Sample = factor(theta.all$Sample)
+  #levels(theta.all$Sample) = sample_names(ps)
+  theta.all$Topic = factor(theta.all$Topic)
+  levels(theta.all$Topic) = c(paste0("Topic_", seq(1,K[[i]])))
+  return(theta.all)
+})
+
+for(i in 1:3){
+  levels(theta.all.blocks[[i]]$Sample) = sample_names(psByBlock[[i]])
+  # add control or plasam
+  theta.all.blocks[[i]] =  mutate(theta.all.blocks[[i]], Group = ifelse(substr(Sample, 1, 2)=="Pt","Plasma", "Control"))
+  theta.all.blocks[[i]]$Group = factor(theta.all.blocks[[i]]$Group)
+}
+```
+
+### Plot topic distribution in each sample in each block
+```{r}
+col.topic = c(wes_palette("Cavalcanti1", n = 5), wes_palette("Darjeeling1", n = 5)) # sum of two n's should be equal to K.
+
+p.all.blocks = lapply(theta.all.blocks, function(u){
+  #sel.samples  = unique(u$Sample)[1:20]
+  sel.samples = c(as.character(unique(u$Sample[(u$Group == "Control")])), as.character(unique(u$Sample[(u$Group == "Plasma")])[c(1:10, 48)]))
+  u = filter(u, Sample %in% sel.samples)
+  #u = filter(u, Sample %in% c(sample_names(psByBlock[[1]])[1:20])) # this is to make only few sample plots
+  p = ggplot() + 
+    geom_density(data = u, 
+      aes(x = topic.dis, 
+        y = ..scaled.., 
+        col = Topic, 
+        fill=Topic)) + 
+    facet_grid(Sample ~ Group, 
+      scales = "fixed") + 
+    scale_color_manual(values = col.topic) + 
+    scale_fill_manual(values = col.topic) + 
+    ylab("density") +
+    xlab("") + 
+    ggtitle("") + 
+    theme(plot.title = element_text(hjust = 0.5), 
+      strip.text.y= element_text(size = 12, angle = 360), 
+      strip.text.x = element_text(size  = 12))
+  return(p)
+})
+
+```
+
+```{r}
+p.all.blocks[[1]]
+ggsave("./Figures/LDA_ED_set1_lib_corr.eps", plot = p.all.blocks[[1]], width = 12, height = 16)
+```
+
+```{r}
+p.all.blocks[[2]]
+ggsave("./Figures/LDA_ED_set2_lib_corr.eps", plot = p.all.blocks[[2]], width = 12, height = 16)
+```
+
+```{r}
+p.all.blocks[[3]]
+ggsave("./Figures/LDA_ED_setP_lib_corr.eps", plot = p.all.blocks[[3]], width = 12, height = 16)
+```
+
+### Posterior ASV distribution in each topic in each block
+```{r}
+beta.all.blocks = lapply(as.list(1:3), function(i){
+  x = samples.all.blocks[[i]]
+  beta = x$beta
+  beta.all = melt(beta)
+  colnames(beta.all) = c("Chain", "Topic", "ASV", "ASV.distribution")
+  beta.all$Topic = factor(beta.all$Topic)
+  levels(beta.all$Topic) = c(paste0("Topic_", seq(1,K[[i]])))
+  beta.all$ASV = factor(beta.all$ASV)
+  return(beta.all)
+})
+
+for(i in 1:3){
+  levels(beta.all.blocks[[i]]$ASV) = taxa_names(psByBlock[[i]])
+}
+
+```
+
+### Plot MAP of ASV in each topic in each block.
+```{r}
+heatmap.map.theta.blocks = lapply(beta.all.blocks, function(x){
+  #sel.spec = as.character(unique(x$ASV)[1:50])
+  #x = filter(x, ASV %in% sel.spec)
+  x.summary = x %>% group_by(Topic, ASV) %>% summarise(log_median_beta = log(median(ASV.distribution, 
+    na.rm = TRUE))) %>%
+  as.data.frame()
+  
+  # choose species with higher proportions
+  x.summary = x.summary[order(x.summary$log_median_beta, decreasing = TRUE),]
+  x.summary = x.summary[1:50, ]
+  
+  p = ggheatmap(x.summary,
+  id.vars = c("ASV", "Topic"),
+  value.name = "log_median_beta"
+) + ggtitle("ASV distribution in each topic") + 
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12))
+  return(p)
+})
+
+```
+
+```{r}
+heatmap.map.theta.blocks[[1]]
+```
+
+```{r}
+heatmap.map.theta.blocks[[2]]
+```
+
+```{r}
+heatmap.map.theta.blocks[[3]]
+```
+
+<!-- ###  Can we look at the ASV distribution in each topic in the following way? -->
+```{r eval=FALSE, include=FALSE}
+# ### Posterior distirbution of ASV in each topic in block
+# beta.all.blocks = lapply(samples.all.blocks, function(x){
+#   beta = x$beta
+#   beta.all = melt(beta)
+#   colnames(beta.all) = c("Chain", "Topic", "ASV", "ASV.distribution")
+#   beta.all$Topic = factor(beta.all$Topic)
+#   levels(beta.all$Topic) = c(paste0("Topic_", seq(1,K)))
+#   beta.all$ASV = factor(beta.all$ASV)
+#   return(beta.all)
+# })
+# 
+# for(i in 1:1){
+#   levels(beta.all.blocks[[i]]$ASV) = taxa_names(psByBlock[[i]])
+# }
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+post.dis.each.topic.in.each.species = lapply(beta.all.blocks, function(y){
+  # sel.spec = c(as.character(unique(x$ASV)[1:20]),"s__Janthinobacterium_sp_1_2014MBL_MicDiv", "s__Deinococcus_soli_Cha_et_al_2014", "s__Thermus_scotoductus")
+  sel.spec = unique(y$ASV)[1:20]
+  x = filter(y, ASV %in% sel.spec)
+  p = ggplot() + 
+    geom_density(data = x, 
+      aes(x = ASV.distribution, 
+        y = ..scaled.., 
+        col = Topic, 
+        fill = Topic)) + 
+    facet_wrap(~ASV, scales = "fixed") + 
+    scale_color_manual(values = col.topic) +
+    scale_fill_manual(values = col.topic) + 
+    ylab("density") + 
+    xlab("ASV distirbution") + 
+    ggtitle("ASV distribution in each topic") + 
+    theme(plot.title = element_text(hjust = 0.5), 
+      strip.text.x= element_text(size = 6)) 
+  return(p)
+})
+
+```
+
+```{r eval=FALSE, include=FALSE}
+post.dis.each.topic.in.each.species[[1]]
+```
+
+
+<!-- In sample Pt_015 (block 1), `s__Deinococcus_soli_Cha_et_al_2014` species was not identified as contaminant by BARBI, but LDA modeling shows that this species belongs to contaminant topic in all samples.  -->
+
+```{r eval=FALSE, include=FALSE}
+post.dis.each.topic.in.each.species[[2]]
+```
+
+```{r eval=FALSE, include=FALSE}
+post.dis.each.topic.in.each.species[[3]]
+```
+
