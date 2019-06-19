@@ -9,16 +9,17 @@ data {
   // hyperparameters
   vector<lower=0>[K] alpha;
   vector<lower=0>[V] gamma;
+  vector<lower=0>[D] lambda;//hyper paramter for library size
 }
 
 parameters {
-  
   simplex[K] theta[D]; // topic mixtures
   simplex[V] beta[K]; // word dist for k^th topic
 }
 
 model {
   for (d in 1:D) {
+    sum(n[d]) ~ poisson(lambda[d]);
     theta[d] ~ dirichlet(alpha);
   }
 
