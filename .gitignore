@@ -46,3 +46,4 @@ Zymo_Analysis/Zymo_Dada2_pipeline/RawSeq/
 Zymo_Analysis/Zymo_Dada2_pipeline/*.html
 Zymo_Analysis/Zymo_Dada2_pipeline/*.sbatch
 Zymo_Analysis/Zymo_Dada2_pipeline/.Rhistory
+NMF/Data/
