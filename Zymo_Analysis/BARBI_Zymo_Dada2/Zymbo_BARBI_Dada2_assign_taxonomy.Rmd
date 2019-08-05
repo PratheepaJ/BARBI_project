@@ -142,9 +142,18 @@ p <- plot_richness(ps.alpha, x="SampleType", measures = c("Shannon"), color = "n
   theme(strip.text.x = element_blank(), legend.position = "none", axis.text.x = element_text(angle = -360)) + geom_hline (yintercept= true.shannon.index, colour="red", lty=6, lwd=1) 
 p
 
+## Black and white
+shape.manual = c(1, 0, 2, 3, 4, 5, 6, 7, 8)
+p <- plot_richness(ps.alpha, x="SampleType", measures = c("Shannon")) +
+  geom_point(aes(shape = name.label), size = 3) + 
+  scale_shape_manual(values = shape.manual) +
+  ylab("Shannon Index") +
+  xlab("Sample Type") +
+  geom_text_repel(aes(label = name.label), size = 4, direction = "x") +
+  theme(strip.text.x = element_blank(), legend.position = "none", axis.text.x = element_text(angle = -360)) + 
+  geom_hline (yintercept = true.shannon.index, colour="black", lty=6, lwd = 1)
 
-
-ggsave("./Figures/Zymo_alpha_diversity.eps", plot=p, width = 4, height = 6)
+ggsave("./Figures/Zymo_alpha_diversity2.eps", plot=p, width = 4, height = 6)
 ```
 
 ### MDS plots
@@ -262,11 +271,11 @@ top <- names(sort(taxa_sums(ps.top), decreasing=TRUE))[1:30]
 
 ps.top <- prune_taxa(top, ps.top)
 otu_table(ps.top) <- otu_table(ps.top) +1
-p <- plot_heatmap(ps.top, sample.label = "Name", taxa.label="Genus", sample.order = c(ncont,stan)) + geom_tile()
+p <- plot_heatmap(ps.top, sample.label = "Name", taxa.label="Genus", sample.order = c(ncont,stan), low = "white",high = "black") + geom_tile()
 p <- p + 
-  guides(fill = guide_legend(title="asinh abundance")) + xlab("Sample")
+  guides(fill = guide_legend(title="asinh")) + xlab("Sample")
 p
-ggsave("./Figures/heatmap_top.eps", plot = p, width = 10, height = 8, dpi = 300)
+ggsave("./Figures/heatmap_top2.eps", plot = p, width = 10, height = 8, dpi = 300)
 
 ```
 
@@ -623,6 +632,7 @@ kable(otu_table(subset_samples(ps.true,SampleType=="Standard")) %>% data.frame()
 set.seed(10000)
 itera <- 10000
 cov_pro <- .95
+psByBlock <- readRDS("./Results/psByBlock.rds")
 num_blks <- length(psByBlock)
 gammaPrior_posTrueSing_all_blocks <- readRDS("./Results/gammaPrior_posTrueSing_Zymo_Dada2.rds")
 library(tidyr)
@@ -668,16 +678,29 @@ for(j in 1: length(sample.names)){
     bg_sig_long <- tidyr::gather(bg.signal,key="Taxa",value="Reads",1:(dim(bg.signal)[2]-1))
     bg_sig_long$Taxa <- as.factor(bg_sig_long$Taxa)
     
-    p <- ggplot(bg_sig_long, aes(x= Reads))+
-            geom_density(aes(y = ..scaled.., fill = group, color = group))+
-            facet_wrap(~Taxa,scales = "free")+
-            scale_fill_manual(values=c("blue","brown"))+
-            scale_color_manual(values=c("blue","brown"))+
-            ggtitle(desired.sample.name)+
-            theme(plot.title = element_text(hjust = 0.5), legend.title=element_blank(), strip.text.x = element_text(size=5),strip.background = element_blank(), panel.grid = element_blank()) + xlab("") + ylab("density")
+    # p <- ggplot(bg_sig_long, aes(x= Reads))+
+    #         geom_density(aes(y = ..scaled.., fill = group, color = group))+
+    #         facet_wrap(~Taxa,scales = "free")+
+    #         scale_fill_manual(values=c("blue","brown"))+
+    #         scale_color_manual(values=c("blue","brown"))+
+    #         ggtitle(desired.sample.name)+
+    #         theme(plot.title = element_text(hjust = 0.5), legend.title=element_blank(), strip.text.x = element_text(size=5),strip.background = element_blank(), panel.grid = element_blank(), panel.background = element_blank()) + xlab("") + ylab("density") 
     
-    fileN <- paste0("Figures/",desired.sample.name,"_histogram",".eps")
-    ggsave(fileN, plot = p, width = 10, height = 5)
+    p <- ggplot(bg_sig_long, aes(x= Reads))+
+            geom_density(aes(y = ..scaled.., linetype = group)) +
+            facet_wrap(~Taxa,scales = "free") +
+            ggtitle(desired.sample.name)+
+            theme(plot.title = element_text(hjust = 0.5),
+              legend.title=element_blank(), 
+              strip.text.x = element_text(size=5),
+              strip.background = element_blank(), 
+              panel.grid = element_blank(), 
+              panel.background = element_blank()) + 
+      xlab("") + 
+      ylab("density") 
+    
+    fileN <- paste0("Figures/",desired.sample.name,"_histogram2",".eps")
+    ggsave(fileN, plot = p, width = 10, height = 5, device = "eps")
 }
 
 ```

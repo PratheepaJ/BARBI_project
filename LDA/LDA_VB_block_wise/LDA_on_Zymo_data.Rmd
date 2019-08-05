@@ -213,7 +213,7 @@ Each sample is modeled as having a mixture of topics, with each ASV drawn from a
 We choose the number of topics to be 4.
 
 Read stan model
-```{r}
+```{r eval=FALSE}
 f <- stan_model(file = "lda.stan")
 ```
 
@@ -278,15 +278,25 @@ theta.all$Group = factor(theta.all$Group)
 ### Plot topic distribution in each sample 
 ```{r}
 col.topic = c(wes_palette("Cavalcanti1", n = 2), wes_palette("Darjeeling1", n = 2))
+# p = ggplot() + 
+#   geom_density(data = theta.all ,aes(x = topic.dis, y = ..scaled.., col = Topic, fill=Topic)) + 
+#   facet_grid(Sample ~ Group, scales = "fixed") + 
+#   scale_color_manual(values = col.topic)+
+#   scale_fill_manual(values = col.topic)+
+#   ylab("density") +
+#   xlab("") + 
+#   ggtitle("") + 
+#   theme(plot.title = element_text(hjust = 0.5, size = 15), strip.text.y= element_text(size = 12), strip.text.x = element_text(size = 12))
+
 p = ggplot() + 
-  geom_density(data = theta.all ,aes(x = topic.dis, y = ..scaled.., col = Topic, fill=Topic)) + 
-  facet_grid(Sample ~ Group, scales = "fixed") + 
-  scale_color_manual(values = col.topic)+
-  scale_fill_manual(values = col.topic)+
+  geom_density(data = theta.all ,aes(x = topic.dis, y = ..scaled.., linetype = Topic)) + 
+  facet_grid(Sample ~ Group, scales = "fixed") +
   ylab("density") +
   xlab("") + 
   ggtitle("") + 
-  theme(plot.title = element_text(hjust = 0.5, size = 15), strip.text.y= element_text(size = 12), strip.text.x = element_text(size = 12))
+  theme(plot.title = element_text(hjust = 0.5, size = 15), 
+    strip.text.y= element_text(size = 12), 
+    strip.text.x = element_text(size = 12))
 ```
 
 We chose four topics because two topics always dominated in dilution series samples. 
@@ -294,7 +304,22 @@ We chose four topics because two topics always dominated in dilution series samp
 
 ```{r}
 p
-ggsave("./Figures/LDA_Zymo.eps", plot = p, width = 12, height = 16)
+ggsave("./Figures/LDA_Zymo2.eps", plot = p, width = 12, height = 16)
+```
+
+
+### boxplot as in Kris's paper
+```{r}
+p = ggplot(data = theta.all) + 
+  geom_boxplot(aes(x = Sample, y = log(topic.dis))) + 
+  facet_grid(Topic ~ Group, scales = "free_x")+
+  ylab(bquote(log(theta[k]))) + 
+  ggtitle("") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 15), 
+    strip.text.y= element_text(size = 12), 
+    strip.text.x = element_text(size = 12))
+p
+ggsave("./Figures/LDA_Zymo_boxplot.eps", plot = p, width = 10, height = 6)
 ```
 
 ### ASV distribution in each topic

@@ -141,7 +141,7 @@ row_scores <- data.frame(li = ranks_pca$li,
 #samdf$SampleID <- as.character(samdf$SampleID)
 
 row_scores <- row_scores %>%
-  left_join(sample_data(psR))
+  left_join(sample_data(psR) %>% data.frame())
 
 row_scores$block <- factor(row_scores$block)
 
@@ -149,20 +149,38 @@ evals_prop <- 100 * (ranks_pca$eig / sum(ranks_pca$eig))
 
 evals <- ranks_pca$eig
 
-p <- ggplot() +
-  geom_point(data = row_scores, aes(x = li.Axis1, y = li.Axis2, shape = Sample_Type, color = block), size = 3)  +
+# p <- ggplot() +
+#   geom_point(data = row_scores, aes(x = li.Axis1, y = li.Axis2, shape = Sample_Type, color = block), size = 3)  +
+#   guides(col = guide_legend(override.aes = list(size = 3))) +
+#   labs(x = sprintf("Axis 1 [%s%% variance]", round(evals_prop[1], 1)), 
+#        y = sprintf("Axis 2 [%s%% variance]", round(evals_prop[2], 1))) +
+#   ggtitle("")+
+#   theme_bw() +
+#   theme(panel.border = element_rect(color = "#787878", fill = alpha("white", 0)), plot.title = element_text(hjust = .5), legend.title=element_text(size = 8), legend.text=element_text(size=8), axis.text = element_text(size = 1),  axis.title = element_text(size = 10)) + 
+#   guides(shape = guide_legend(title="Sample Type"), color = guide_legend(title = "Block"))
+
+#+ coord_fixed(sqrt(evals[2] / evals[1])) 
+
+p <- ggplot(data = row_scores) +
+  geom_point(aes(x = li.Axis1, y = li.Axis2, color = Sample_Type, shape = block, fill = block), size = 3)  +
+  scale_color_grey() +
   guides(col = guide_legend(override.aes = list(size = 3))) +
   labs(x = sprintf("Axis 1 [%s%% variance]", round(evals_prop[1], 1)), 
        y = sprintf("Axis 2 [%s%% variance]", round(evals_prop[2], 1))) +
   ggtitle("")+
   theme_bw() +
-  theme(panel.border = element_rect(color = "#787878", fill = alpha("white", 0)), plot.title = element_text(hjust = .5), legend.title=element_text(size = 8), legend.text=element_text(size=8), axis.text = element_text(size = 1),  axis.title = element_text(size = 10)) + 
-  guides(shape = guide_legend(title="Sample Type"), color = guide_legend(title = "Block"))
-
-#+ coord_fixed(sqrt(evals[2] / evals[1])) 
+  theme(panel.border = element_rect(color = "#787878", 
+    fill = alpha("white", 0)), 
+    plot.title = element_text(hjust = .5),
+    legend.title=element_text(size = 8),
+    legend.text=element_text(size=8), 
+    axis.text = element_text(size = 1),  
+    axis.title = element_text(size = 10)) + 
+  guides(shape = guide_legend(title="Block"), 
+    color = guide_legend(title = "Sample Type"))
 
 p
 
-ggsave("./Figures/PCA_SIRS.eps", plot=p, width = 6, height = 4)
+ggsave("./Figures/PCA_SIRS3.eps", plot=p, width = 6, height = 4)
 ```
 

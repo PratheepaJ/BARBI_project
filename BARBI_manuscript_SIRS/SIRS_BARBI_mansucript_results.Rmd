@@ -175,15 +175,25 @@ sam.order <- as.character(df$sample_data.ps..SampleCode)
 sample_data(ps.top)$block <- factor(sample_data(ps.top)$block)
 levels(sample_data(ps.top)$block) <- c("Set 1", "Set 2", "Set P")
 
-p <- plot_heatmap(ps.top, sample.label = "SampleCode", taxa.label="Species", taxa.order = top, sample.order = sam.order) + 
-  geom_tile() + 
-  guides(fill = guide_legend(title="arcsinh ")) + 
-  facet_grid(~block+Sample_Type, scales = "free_x") + theme(strip.background = element_blank(), axis.text = element_text(size = 8))
+# p <- plot_heatmap(ps.top, sample.label = "SampleCode",
+#   taxa.label="Species", taxa.order = top, sample.order = sam.order) + 
+#   geom_tile() + 
+#   guides(fill = guide_legend(title="arcsinh ")) + 
+#   facet_grid(~block+Sample_Type, scales = "free_x") + theme(strip.background = element_blank(), axis.text = element_text(size = 8))
+# 
+# p <- p + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
+# p
 
-p <- p+ theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
+p <- plot_heatmap(ps.top, sample.label = "SampleCode",
+  taxa.label = "Species", taxa.order = top, sample.order = sam.order, low = "white",high = "black") +
+  geom_tile() + 
+  guides(fill = guide_legend(title="arcsinh")) + 
+  facet_grid(~ block + Sample_Type, scales = "free_x") + theme(strip.background = element_blank(), axis.text = element_text(size = 8))
+
+p <- p + theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
 p
 
-ggsave("./Figures/heatmap_SIRS_top.eps", plot = p, width = 10, height = 6)
+ggsave("./Figures/heatmap_SIRS_top2.eps", plot = p, width = 10, height = 6)
 ```
 
 
@@ -690,16 +700,43 @@ for(j in 1: length(sample.names)){
     bg_sig_long <- tidyr::gather(bg.signal,key="Taxa",value="Reads",1:(dim(bg.signal)[2]-1))
     bg_sig_long$Taxa <- as.factor(bg_sig_long$Taxa)
     
-    p <- ggplot(bg_sig_long, aes(x= Reads))+
-            geom_density(aes(y = ..scaled.., fill = group, color = group))+
-            facet_wrap(~Taxa,scales = "free")+
-            scale_fill_manual(values=c("blue","brown"))+
-            scale_color_manual(values=c("blue","brown"))+
-            ggtitle(desired.sample.name)+
-            theme(plot.title = element_text(hjust = 0.5), legend.title=element_blank(), strip.text.x = element_text(size=5),strip.background = element_blank(), panel.grid = element_blank()) + xlab("") + ylab("density")
+    # p <- ggplot(bg_sig_long, aes(x= Reads))+
+    #         geom_density(aes(y = ..scaled.., fill = group, color = group))+
+    #         facet_wrap(~Taxa,scales = "free")+
+    #         scale_fill_manual(values=c("blue","brown"))+
+    #         scale_color_manual(values=c("blue","brown"))+
+    #         ggtitle(desired.sample.name)+
+    #         theme(plot.title = element_text(hjust = 0.5), legend.title=element_blank(), strip.text.x = element_text(size=5),strip.background = element_blank(), panel.grid = element_blank(), panel.background = element_blank()) + xlab("") + ylab("density")
     
-    fileN <- paste0("Figures/","block_",blk,"_",desired.sample.name,"_histogram",".eps")
-    ggsave(fileN, plot = p, width = 10, height = 5)
+    # p <- ggplot(bg_sig_long, aes(x= Reads))+
+    #         geom_density(aes(y = ..scaled.., linetype = group, fill = group))+
+    #   scale_fill_manual(values=c("blue","brown")) +
+    #         facet_wrap(~Taxa,scales = "free")+
+    #         ggtitle(desired.sample.name)+
+    #         theme(plot.title = element_text(hjust = 0.5),
+    #           legend.title=element_blank(), 
+    #           strip.text.x = element_text(size=5),
+    #           strip.background = element_blank(), 
+    #           panel.grid = element_blank(), 
+    #           panel.background = element_blank()) + 
+    #   xlab("") + 
+    #   ylab("density")
+    
+    p <- ggplot(bg_sig_long, aes(x= Reads))+
+            geom_density(aes(y = ..scaled.., linetype = group)) +
+            facet_wrap(~Taxa,scales = "free")+
+            ggtitle(desired.sample.name)+
+            theme(plot.title = element_text(hjust = 0.5),
+              legend.title=element_blank(), 
+              strip.text.x = element_text(size=5),
+              strip.background = element_blank(), 
+              panel.grid = element_blank(), 
+              panel.background = element_blank()) + 
+      xlab("") + 
+      ylab("density")
+    
+    fileN <- paste0("Figures/","block_",blk,"_",desired.sample.name,"_histogram3",".eps")
+    ggsave(fileN, plot = p, width = 10, height = 5, device = "eps")
 }
 
 ```

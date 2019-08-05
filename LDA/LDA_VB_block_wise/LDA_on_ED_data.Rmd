@@ -120,7 +120,7 @@ Each sample is modeled as having a mixture of topics, with each species drawn fr
 ### LDA on specimen and control samples
 
 
-```{r}
+```{r eval=FALSE}
 f = stan_model(file = "lda.stan")
 ```
 
@@ -143,11 +143,11 @@ stan.data.all.blocks = lapply(as.list(1:3), function(i){
 ```
 
 Sample from posterior using variational Bayes.
-```{r}
+```{r eval=FALSE}
 stan.fit.all.blocks = lapply(stan.data.all.blocks, function(u){
   stan_fit = vb(f, 
     data = u, 
-    output_samples = 100, 
+    output_samples = 1000, 
     eta = 1, 
     adapt_engaged = FALSE,
     seed = 234
@@ -157,6 +157,10 @@ stan.fit.all.blocks = lapply(stan.data.all.blocks, function(u){
 
 
 saveRDS(stan.fit.all.blocks, file = "./Results/stan_fit_all_ED.rds")
+```
+
+```{r}
+stan.fit.all.blocks <- readRDS("./Results/stan_fit_all_ED.rds")
 ```
 
 ### Extract posterior samples
@@ -199,16 +203,30 @@ p.all.blocks = lapply(theta.all.blocks, function(u){
   sel.samples = c(as.character(unique(u$Sample[(u$Group == "Control")])), as.character(unique(u$Sample[(u$Group == "Plasma")])[c(1:10, 48)]))
   u = filter(u, Sample %in% sel.samples)
   #u = filter(u, Sample %in% c(sample_names(psByBlock[[1]])[1:20])) # this is to make only few sample plots
-  p = ggplot() + 
+  # p = ggplot() + 
+  #   geom_density(data = u, 
+  #     aes(x = topic.dis, 
+  #       y = ..scaled.., 
+  #       col = Topic, 
+  #       fill=Topic)) + 
+  #   facet_grid(Sample ~ Group, 
+  #     scales = "fixed") + 
+  #   scale_color_manual(values = col.topic) + 
+  #   scale_fill_manual(values = col.topic) + 
+  #   ylab("density") +
+  #   xlab("") + 
+  #   ggtitle("") + 
+  #   theme(plot.title = element_text(hjust = 0.5), 
+  #     strip.text.y= element_text(size = 12, angle = 360), 
+  #     strip.text.x = element_text(size  = 12))
+  
+    p = ggplot() + 
     geom_density(data = u, 
       aes(x = topic.dis, 
         y = ..scaled.., 
-        col = Topic, 
-        fill=Topic)) + 
+        linetype = Topic)) + 
     facet_grid(Sample ~ Group, 
       scales = "fixed") + 
-    scale_color_manual(values = col.topic) + 
-    scale_fill_manual(values = col.topic) + 
     ylab("density") +
     xlab("") + 
     ggtitle("") + 
@@ -222,7 +240,7 @@ p.all.blocks = lapply(theta.all.blocks, function(u){
 
 ```{r}
 p.all.blocks[[1]]
-ggsave("./Figures/LDA_ED_set1.eps", plot = p.all.blocks[[1]], width = 12, height = 16)
+ggsave("./Figures/LDA_ED_set1_2.eps", plot = p.all.blocks[[1]], width = 12, height = 16)
 ```
 
 ```{r}
@@ -233,6 +251,43 @@ ggsave("./Figures/LDA_ED_set2.eps", plot = p.all.blocks[[2]], width = 12, height
 ```{r}
 p.all.blocks[[3]]
 ggsave("./Figures/LDA_ED_setP.eps", plot = p.all.blocks[[3]], width = 12, height = 16)
+```
+
+
+### boxplot as in Kris's paper
+```{r}
+
+p.all.blocks = lapply(theta.all.blocks, function(u){
+  sel.samples = c(as.character(unique(u$Sample[(u$Group == "Control")])), as.character(unique(u$Sample[(u$Group == "Plasma")])[c(1:10, 48)]))
+  u = filter(u, Sample %in% sel.samples)
+  p = ggplot(data = u) + 
+  geom_boxplot(aes(x = Sample, y = log(topic.dis))) + 
+  facet_grid(Topic ~ Group, scales = "free_x")+
+  ylab(bquote(log(theta[k]))) + 
+  ggtitle("") + 
+  theme(plot.title = element_text(hjust = 0.5, size = 15), 
+    strip.text.y= element_text(size = 6), 
+    strip.text.x = element_text(size = 6) , axis.text.x = element_text(angle = 90, hjust = 1))
+  
+  return(p)
+})
+
+```
+
+```{r}
+p.all.blocks[[1]]
+ggsave("./Figures/LDA_ED_set1_boxplot.eps", plot = p.all.blocks[[1]], width = 9, height = 6)
+```
+
+
+```{r}
+p.all.blocks[[2]]
+ggsave("./Figures/LDA_ED_set2_boxplot.eps", plot = p.all.blocks[[2]], width = 9, height = 6)
+```
+
+```{r}
+p.all.blocks[[3]]
+ggsave("./Figures/LDA_ED_set3_boxplot.eps", plot = p.all.blocks[[3]], width = 9, height = 6)
 ```
 
 ### Posterior ASV distribution in each topic in each block
