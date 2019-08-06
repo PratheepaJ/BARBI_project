@@ -242,9 +242,9 @@ p.all.blocks = lapply(theta.all.blocks, function(u){
   sel.samples = c(as.character(unique(u$Sample[(u$Group == "Control")])), as.character(unique(u$Sample[(u$Group == "Plasma")])[10:19]))
   u = filter(u, Sample %in% sel.samples)
   p = ggplot(data = u) + 
-  geom_boxplot(aes(x = Sample, y = log(topic.dis))) + 
+  geom_boxplot(aes(x = Sample, y = topic.dis)) + 
   facet_grid(Topic ~ Group, scales = "free_x")+
-  ylab(bquote(log(theta[k]))) + 
+  ylab(bquote(theta[k])) + 
   ggtitle("") + 
   theme(plot.title = element_text(hjust = 0.5, size = 15), 
     strip.text.y = element_text(size = 6), 
@@ -286,9 +286,8 @@ for(i in 1:2){
 ```
 
 
-
-### Plot MAP of ASV in each topic in each block.
 ```{r}
+library(viridis)
 heatmap.map.theta.blocks = lapply(beta.all.blocks, function(x){
   #sel.spec = as.character(unique(x$ASV)[1:50])
   #x = filter(x, ASV %in% sel.spec)
@@ -304,8 +303,10 @@ heatmap.map.theta.blocks = lapply(beta.all.blocks, function(x){
   id.vars = c("ASV", "Topic"),
   value.name = "log_median_beta"
 ) + ggtitle("ASV distribution in each topic") + 
-  theme(plot.title = element_text(hjust = 0.5, size =12), axis.text = element_text(size = 12),
-        axis.title=element_text(size = 14, face="bold")) 
+  theme(plot.title = element_text(hjust = 0.5, size =12),
+    axis.text = element_text(size = 12),
+    axis.title=element_text(size = 14, face="bold")) +
+  scale_fill_gradient(low = "white", high = "orange")
   return(p)
 })
 
@@ -320,59 +321,3 @@ heatmap.map.theta.blocks[[2]]
 ```
 
 
-<!-- ###  Can we look at the ASV distribution in each topic in the following way? -->
-```{r include=FALSE, eval=FALSE}
-# ### Posterior distirbution of ASV in each topic in block
-# beta.all.blocks = lapply(samples.all.blocks, function(x){
-#   beta = x$beta
-#   beta.all = melt(beta)
-#   colnames(beta.all) = c("Chain", "Topic", "ASV", "ASV.distribution")
-#   beta.all$Topic = factor(beta.all$Topic)
-#   levels(beta.all$Topic) = c(paste0("Topic_", seq(1,K)))
-#   beta.all$ASV = factor(beta.all$ASV)
-#   return(beta.all)
-# })
-# 
-# for(i in 1:1){
-#   levels(beta.all.blocks[[i]]$ASV) = taxa_names(psByBlock[[i]])
-# }
-
-```
-
-
-```{r include=FALSE, eval=FALSE}
-post.dis.each.topic.in.each.species = lapply(beta.all.blocks, function(y){
-  # sel.spec = c(as.character(unique(y$ASV)[1:20]), "s__Pseudomonas_antarctica", "s__Clostridium_formicaceticum", "s__Cuprivavidus_gilardii")
-  sel.spec = c("s__Pseudomonas_antarctica", "s__Clostridium_formicaceticum", "s__Cupriavidus_gilardii", "s__Human_herpesvirus_7", "s__Actinomyces_oris")
-  x = filter(y, ASV %in% sel.spec)
-  p = ggplot() + 
-    geom_density(data = x, 
-      aes(x = ASV.distribution, 
-        y = ..scaled.., 
-        col = Topic, 
-        fill = Topic)) + 
-    facet_wrap(~ASV, scales = "fixed") + 
-    scale_color_manual(values = col.topic) +
-    scale_fill_manual(values = col.topic) + 
-    ylab("density") + 
-    xlab("ASV distirbution") + 
-    ggtitle("ASV distribution in each topic") + 
-    theme(plot.title = element_text(hjust = 0.5), 
-      strip.text.x= element_text(size = 12), axis.text = element_text(size = 12),
-        axis.title=element_text(size = 12)) 
-  return(p)
-})
-
-```
-
-```{r include=FALSE, eval=FALSE}
-post.dis.each.topic.in.each.species[[1]]
-```
-
-
-
-```{r include=FALSE, eval=FALSE}
-post.dis.each.topic.in.each.species[[2]]
-```
-
-<!-- If there are contaminant species that were still present after using BARBI, we can use LDA to determine the topic that those species belongs to. This will help to remove more contaminant species. -->

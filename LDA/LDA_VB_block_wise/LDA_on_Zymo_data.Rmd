@@ -311,9 +311,9 @@ ggsave("./Figures/LDA_Zymo2.eps", plot = p, width = 12, height = 16)
 ### boxplot as in Kris's paper
 ```{r}
 p = ggplot(data = theta.all) + 
-  geom_boxplot(aes(x = Sample, y = log(topic.dis))) + 
+  geom_boxplot(aes(x = Sample, y = topic.dis)) + 
   facet_grid(Topic ~ Group, scales = "free_x")+
-  ylab(bquote(log(theta[k]))) + 
+  ylab(bquote(theta[k])) + 
   ggtitle("") + 
   theme(plot.title = element_text(hjust = 0.5, size = 15), 
     strip.text.y= element_text(size = 12), 
@@ -333,7 +333,9 @@ beta.all$ASV = factor(beta.all$ASV)
 levels(beta.all$ASV) = df.ASV$ASV.Genus
 ```
 
+
 ```{r}
+library(viridis)
 ggheatmap(
   beta.all %>%
   group_by(Topic, ASV) %>%
@@ -342,39 +344,11 @@ ggheatmap(
   id.vars = c("ASV", "Topic"),
   value.name = "log_median_beta"
 ) + ggtitle("ASV distribution in each topic") + 
-  theme(plot.title = element_text(hjust = 0.5, size = 12), axis.text.x = element_text(size = 12), axis.text.y = element_text(size = 12)) 
-```
-
-<!-- ###  Can we look at the ASV distribution in each topic in the following way? -->
-```{r include = FALSE, eval=FALSE}
-### Posterior distirbution of ASV in each topic
-beta = samples$beta
-beta.all = melt(beta)
-colnames(beta.all) = c("Chain", "Topic", "ASV", "ASV.distribution")
-beta.all$Topic = factor(beta.all$Topic)
-levels(beta.all$Topic) = c(paste0("Topic_", seq(1,K)))
-beta.all$ASV = factor(beta.all$ASV)
-levels(beta.all$ASV) = df.ASV$ASV.Genus
+  theme(plot.title = element_text(hjust = 0.5, size = 8), axis.text.x = element_text(size = 8), axis.text.y = element_text(size = 12)) + 
+  scale_fill_gradient(low = "white", high = "orange")
 ```
 
 
-```{r include = FALSE, eval=FALSE}
-ggplot() + 
-  geom_density(data = beta.all ,aes(x = ASV.distribution, y = ..scaled.., col = Topic, fill = Topic)) + 
-  facet_wrap(~ASV, scales = "fixed") + 
-  scale_color_manual(values = col.topic)+
-  scale_fill_manual(values = col.topic) + 
-  ylab("density") +
-  xlab("ASV distribution") + 
-  ggtitle("ASV distribution in each topic") + 
-  theme(plot.title = element_text(hjust = 0.5), strip.text.x= element_text(size = 6)) 
-```
+We used LDA on the standard eight dilution series samples and 10 negative controls. LDA starting with $T=10$ topics on the ZymoBIOMICS data assigned each negative control sample to a different topic. By varying the number of topics, we observed that two topics were consistently assigned to dilution series samples. Thus, we reduced the number of topics to four which showed one clear contaminant topic (Topic 1), two topics dominated by true ASVs (Topic 2 and 4), and a third topic (Topic 3) which was a mixture of true ASVs with low abundance and contaminant ASVs as in Figure \ref{fig10}. 
 
-### Topic distribution summary in negative controls
-```{r}
-theta.all.ctrl = filter(theta.all, Group == "Control")
-map.theta = theta.all.ctrl %>% group_by(Sample, Topic) %>% summarize(map = mean(topic.dis))
-agg.theta.in.ctrl = map.theta %>% group_by(Topic) %>% summarize(mean.over.ctrl = mean(map))
-agg.theta.in.ctrl
-```
 
