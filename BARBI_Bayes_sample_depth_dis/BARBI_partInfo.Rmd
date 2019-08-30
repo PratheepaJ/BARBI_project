@@ -1,0 +1,286 @@
+---
+title: "Bayesian method to estimate the partial information and find the distribution of sample depth"
+author: "Pratheepa Jeganathan"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r}
+library(phyloseq)
+library(baySeq)
+library(SummarizedExperiment)
+library(magrittr)
+library(dplyr)
+library(EBSeq)
+library(DESeq2)
+library(ggplot2)
+library(fitdistrplus) # fit distributions
+```
+
+
+```{r}
+ps = readRDS("./Data/ps_zymo.rds")
+```
+
+# Make a summrized experiment
+```{r}
+createSEFromphyloseq <- function(ps){
+  if (dim(otu_table(ps))[1] != ntaxa(ps)) {
+        otu_table(ps) <- t(otu_table(ps))
+    }
+  ot <- otu_table(ps, taxa_are_rows = TRUE)  %>% as.data.frame %>% as.matrix
+  cd <- sample_data(ps) %>% data.frame
+  rd <- tax_table(ps) 
+  rd <- as(rd,"matrix")
+  rd <- as.data.frame(rd)
+  
+  se.ps <- SummarizedExperiment(
+    assays = list(exprs=ot),
+    colData = cd,
+    rowData = rd
+  )
+  
+  rm(list = c("ot","cd","rd", "ps"))
+  return(se.ps)
+}
+
+se = createSEFromphyloseq(ps)
+```
+
+# Subset the negative controls
+```{r}
+se_nc = se[, colData(se)$SampleType == "Negative"]
+```
+
+```{r eval=FALSE}
+if(require("parallel")) cl = makeCluster(3) else cl = NULL
+```
+
+# baySeq
+```{r eval=FALSE}
+nbinomDensityFunction = function(x, observables, parameters) {
+  if(any(sapply(parameters, function(x) any(x < 0)))) return(NA)
+  dnbinom(x, mu = parameters[[1]] * observables$libsizes * observables$seglens, size = 1 / parameters[[2]], log = TRUE)
+}
+
+CD = new("countData", 
+  data = assay(se_nc) %>% as.matrix(), 
+  replicates = colData(se_nc)$SampleType,
+  groups = list(DE = c(rep(1, 5), rep(2, 5))))
+#library scaling factors that should be used for either a 'countData', or a matrix of counts and replicate information
+libsizes(CD) = getLibsizes(CD, estimationType = "quantile")
+
+densityFunction(CD) = new("densityFunction", density = nbinomDensityFunction, initiatingValues = c(0.1, 1), equalOverReplicates = c(FALSE, TRUE), lower = function(x) 0, 
+  upper = function(x) 1 + max(x) * 2, stratifyFunction = rowMeans, stratifyBreaks = 10)
+
+nbCD = getPriors(CD, cl = cl)
+## posterior likelihood
+nbCD = getLikelihoods(nbCD, cl = cl)
+
+
+```
+
+```{r eval=FALSE}
+nbinomDensityFunction = function(x, observables, parameters) {
+  if(any(sapply(parameters, function(x) any(x < 0)))) return(NA)
+  dnbinom(x, mu = parameters[[1]] * observables$libsizes * observables$seglens, size = 1 / parameters[[2]], log = TRUE)
+}
+
+CD = new("countData", 
+  data = assay(se_nc) %>% as.matrix(), 
+  replicates = colData(se_nc)$SampleType,
+  groups = list(DE = c(rep(1, 10))))
+#library scaling factors that should be used for either a 'countData', or a matrix of counts and replicate information
+libsizes(CD) = getLibsizes(CD, estimationType = "quantile")
+
+densityFunction(CD) = new("densityFunction", density = nbinomDensityFunction, initiatingValues = c(0.1, 1), equalOverReplicates = c(FALSE, TRUE), lower = function(x) 0, 
+  upper = function(x) 1 + max(x) * 2, stratifyFunction = rowMeans, stratifyBreaks = 10)
+
+nbCD = getPriors(CD, cl = cl)
+## posterior likelihood
+nbCD = getLikelihoods(nbCD, cl = cl)
+
+```
+
+# EBSeq
+
+# Distribution of sample depth scaling factor
+
+
+## Zymo
+```{r}
+if (dim(otu_table(ps))[2] != nsamples(ps)) {
+        otu_table(ps) = t(otu_table(ps))
+    }
+ps_zymo = ps
+ps_zymo_dil = subset_samples(ps, SampleType == "Standard")
+ot = otu_table(ps_zymo_dil) %>% data.frame %>% as.matrix
+geo_mean = function(x) {
+        if(all(x == 0)){
+            val = 0
+        }else{
+            val = exp(sum(log(x[x > 0]))/length(x))
+        }
+        return(val)
+    }
+
+geom_mean_row = apply(ot, 1, FUN = geo_mean)
+sj_zymo_dil = estimateSizeFactorsForMatrix(ot, median, geoMeans = geom_mean_row)
+hist(sj_zymo_dil)
+
+ps_zymo_ctrl = subset_samples(ps, SampleType == "Negative")
+ot = otu_table(ps_zymo_ctrl) %>% data.frame %>% as.matrix
+geom_mean_row = apply(ot, 1, FUN = geo_mean)
+sj_zymo_ctrl = estimateSizeFactorsForMatrix(ot, median, geoMeans = geom_mean_row)
+hist(sj_zymo_ctrl)
+```
+
+fit gamma distribution
+```{r}
+# fit_gamma_dil = fitdist(sj_zymo_dil, distr = "gamma", method = "mle")
+# summary(fit_gamma_dil)
+# fit_gamma_dil$estimate
+# 
+# fit_gamma_ctrl = fitdist(sj_zymo_ctrl, distr = "gamma", method = "mle")
+# summary(fit_gamma_ctrl)
+# fit_gamma_ctrl$estimate
+```
+
+qqplot
+
+after estimating shape and rate, find quantile in the sampling depth
+```{r}
+# dat_q = quantile(sj_zymo_dil, probs = seq(0,1,.01))
+# sim = rgamma(1000, shape = as.numeric(fit_gamma_dil$estimate[1]), rate = as.numeric(fit_gamma_dil$estimate[2]))
+# sim_q = quantile(sim, probs=seq(0,1,.01) )
+# df = data.frame(dat_q = as.numeric(dat_q), sim_q = as.numeric(sim_q))
+# ggplot(df) + geom_point(aes(x = dat_q, y = sim_q))
+
+
+```
+
+```{r}
+qq_plot = function(x, probs = seq(0,1,.01), n_sim = 1000){
+  fit_gamma = fitdist(x, distr = "gamma", method = "mle")
+  est_shape = as.numeric(fit_gamma$estimate[1]) 
+  est_rate = as.numeric(fit_gamma$estimate[2])
+  dat_q = quantile(x, probs = probs)
+  sim = rgamma(n_sim, shape = est_shape, rate = est_rate)
+  sim_q = quantile(sim, probs = probs)
+  df = data.frame(dat_q = as.numeric(dat_q), sim_q = as.numeric(sim_q))
+  p = ggplot(df) + 
+    geom_point(aes(x = dat_q, y = sim_q))
+  return(p)
+}
+
+```
+
+Zymo dilution series
+```{r}
+qq_plot(sj_zymo_dil)
+```
+
+Zymo negative controls
+```{r}
+qq_plot(sj_zymo_ctrl)
+```
+
+
+## SEPSIS
+```{r}
+ps  = readRDS("./Data/psJan18.rds")
+if (dim(otu_table(ps))[2] != nsamples(ps)) {
+        otu_table(ps) = t(otu_table(ps))
+}
+ps_sepsis = ps
+
+ps_sepsis_plasma = subset_samples(ps_sepsis, Sample_Type == "Plasma")
+ot = otu_table(ps_sepsis_plasma) %>% data.frame %>% as.matrix
+geom_mean_row = apply(ot, 1, FUN = geo_mean)
+sj_sepsis_plasma = estimateSizeFactorsForMatrix(ot, median, geoMeans = geom_mean_row)
+hist(sj_sepsis_plasma)
+
+
+ps_sepsis_ctrl = subset_samples(ps_sepsis, Sample_Type == "Control")
+ot = otu_table(ps_sepsis_ctrl) %>% data.frame %>% as.matrix
+geom_mean_row = apply(ot, 1, FUN = geo_mean)
+sj_sepsis_ctrl = estimateSizeFactorsForMatrix(ot, median, geoMeans = geom_mean_row)
+hist(sj_sepsis_ctrl)
+```
+
+sepsis plasma
+```{r}
+qq_plot(sj_sepsis_plasma)
+```
+
+sepsis negative control
+```{r}
+qq_plot(sj_sepsis_ctrl)
+```
+
+We may need to do qq_plot by batch
+
+## Vaginal microbiome Stanford A
+```{r}
+load("./Data/PregnancyClosed15.Rdata")
+rm(list=c("PS","PSbs","PSPost"))
+ps = PSPreg[["Vaginal_Swab"]]
+
+if (dim(otu_table(ps))[2] != nsamples(ps)) {
+        otu_table(ps) = t(otu_table(ps))
+}
+ps = prune_taxa((apply(otu_table(ps), 1, function(x){sum(x>0)}))>0,ps)
+
+ot = otu_table(ps) %>% data.frame %>% as.matrix
+geom_mean_row = apply(ot, 1, FUN = geo_mean)
+sj_vaginal = estimateSizeFactorsForMatrix(ot, median, geoMeans = geom_mean_row)
+hist(sj_vaginal)
+
+```
+```{r}
+qq_plot(sj_vaginal)
+```
+
+```{r}
+qq_plot(sj_vaginal, probs = seq(0, .6, .01))
+```
+
+
+## Vaginal microbiome Stanford B
+```{r}
+load("./Data/processed.rda")
+#   Vaginal samples from Stanford and UAB new cohorts
+ps = phyloseq(otu_table(st, taxa_are_rows=FALSE), sample_data(df), tax_table(tax))
+#   subset Stanford samples
+ps = subset_samples(ps,Cohort=="Stanford")
+
+#   make taxa in rows and samples in columns
+if(dim(otu_table(ps))[2]!=nsamples(ps)){
+  otu_table(ps) = t(otu_table(ps))
+  }
+
+ps = prune_taxa((apply(otu_table(ps),1,function(x){
+  sum(x>0)}))>0, ps)
+
+ot = otu_table(ps) %>% data.frame %>% as.matrix
+geom_mean_row = apply(ot, 1, FUN = geo_mean)
+sj_vaginal_B = estimateSizeFactorsForMatrix(ot, median, geoMeans = geom_mean_row)
+hist(sj_vaginal_B)
+```
+ 
+```{r}
+qq_plot(sj_vaginal_B)
+```
+
+
+```{r}
+qq_plot(sj_vaginal_B, probs = seq(0, .6, .01))
+```
+

@@ -311,7 +311,7 @@ ggsave("./Figures/LDA_Zymo2.eps", plot = p, width = 12, height = 16)
 ### boxplot as in Kris's paper
 ```{r}
 p = ggplot(data = theta.all) + 
-  geom_boxplot(aes(x = Sample, y = topic.dis)) + 
+  geom_boxplot(aes(x = Sample, y = topic.dis, color = Topic)) + 
   facet_grid(Topic ~ Group, scales = "free_x")+
   ylab(bquote(theta[k])) + 
   ggtitle("") + 
@@ -319,7 +319,7 @@ p = ggplot(data = theta.all) +
     strip.text.y= element_text(size = 12), 
     strip.text.x = element_text(size = 12))
 p
-ggsave("./Figures/LDA_Zymo_boxplot.eps", plot = p, width = 10, height = 6)
+ggsave("./Figures/LDA_Zymo_boxplot_col.eps", plot = p, width = 10, height = 6)
 ```
 
 ### ASV distribution in each topic

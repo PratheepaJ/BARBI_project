@@ -242,7 +242,7 @@ p.all.blocks = lapply(theta.all.blocks, function(u){
   sel.samples = c(as.character(unique(u$Sample[(u$Group == "Control")])), as.character(unique(u$Sample[(u$Group == "Plasma")])[10:19]))
   u = filter(u, Sample %in% sel.samples)
   p = ggplot(data = u) + 
-  geom_boxplot(aes(x = Sample, y = topic.dis)) + 
+  geom_boxplot(aes(x = Sample, y = topic.dis, color = Topic)) + 
   facet_grid(Topic ~ Group, scales = "free_x")+
   ylab(bquote(theta[k])) + 
   ggtitle("") + 
@@ -257,13 +257,13 @@ p.all.blocks = lapply(theta.all.blocks, function(u){
 
 ```{r}
 p.all.blocks[[1]]
-ggsave("./Figures/LDA_HF_set1_boxplot.eps", plot = p.all.blocks[[1]], width = 9, height = 6)
+ggsave("./Figures/LDA_HF_set1_boxplot_col.eps", plot = p.all.blocks[[1]], width = 9, height = 6)
 ```
 
 
 ```{r}
 p.all.blocks[[2]]
-ggsave("./Figures/LDA_HF_set2_boxplot.eps", plot = p.all.blocks[[2]], width = 9, height = 6)
+ggsave("./Figures/LDA_HF_set2_boxplot_col.eps", plot = p.all.blocks[[2]], width = 9, height = 6)
 ```
 
 ### Posterior ASV distribution in each topic in each block

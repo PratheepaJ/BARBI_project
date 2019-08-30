@@ -27,11 +27,18 @@ library(ggplot2)
 Read phyloseq .
 ```{r }
 ps.mds <- readRDS("./Data/ps_sirs_updated_may_1_2018.rds")
+ps.mds
 ```
 
 Remove library control.
 ```{r }
-ps.mds <- subset_samples(ps.mds,Sample_Type = !"Library_Control")
+ps.mds <- subset_samples(ps.mds, !(Sample_Type == "Library_Control"))
+ps.mds
+```
+
+
+```{r}
+table(sample_data(ps.mds)$Sample_Type)
 ```
 
 Adding blocks.
@@ -56,8 +63,9 @@ totalReads <- colSums(otu_table(ps.mds))
 #   distribution of total reads per sample
 hist(log(totalReads),yaxs = "i",xaxs = "i",main = "Distribution of total reads per sample",breaks = 50)
 
-#   select SIRS samples, healthy samples, and negative controls 
-ps.mds <- subset_samples(ps.mds,SampleType %in% c("SIRS","Control","Healthy"))
+#   select SIRS samples and negative controls 
+ps.mds <- subset_samples(ps.mds,SampleType %in% c("SIRS","Control"))
+ps.mds
 ```
 
 Preprocessing taxa. 
