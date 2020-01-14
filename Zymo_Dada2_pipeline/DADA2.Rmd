@@ -1,0 +1,404 @@
+---
+title: "DADA2 analysis"
+author: "Pratheepa Jeganathan"
+date: "2/14/2019"
+output: 
+  html_document:
+    toc: true
+---
+
+We were not given the parameters used for Zymo analysis. So we figured out by trial and error method.
+
+- filterAndTrim
+    - Quality score filtering: truncQ = 6 but less than size and up to 2 will remove the same number of reads
+    - Maximum expected error: maxEE = c(10,10), I chose these values by choosing different maxEE and comparing the number of reads given in the report after filtering. 
+
+- dada
+    - we chose pool = FALSE to pool samples before inference
+
+- mergePairs
+    - minOverlap = 12 
+    - maxMismatch = 0 (no mismatch in the overlap region is accepted)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 15, fig.height = 10)
+```
+
+
+```{r eval=FALSE}
+pkgs <- c("dada2", "magrittr", "dplyr", "phyloseq", "ggplot2")
+BiocManager::install(setdiff(pkgs, installed.packages()), update = TRUE)
+```
+
+```{r}
+library(dada2); packageVersion("dada2")
+library(magrittr)
+library(dplyr)
+library(phyloseq); packageVersion("phyloseq")
+library(ggplot2); packageVersion("ggplot2")
+```
+
+```{r}
+path <- "RawSeq"
+list.files(path)
+```
+
+
+```{r}
+# Forward and reverse fastq filenames have format: SAMPLENAME_R1.fastq and SAMPLENAME_R2.fastq
+fnFs <- sort(list.files(path, pattern="_R1.fastq", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern="_R2.fastq", full.names = TRUE))
+# Extract sample names, assuming filenames have format: SAMPLENAME_R1.fastq
+
+sample.names <- sapply(strsplit(sub('(^[^_]+_[^_]+)_(.*)$', '\\1 \\2', basename(fnFs)), " "), `[`, 1)
+
+sample.names <- gsub("\\_", ".", sample.names)
+```
+
+### Filtering
+
+qualify profile of forward reads (first is control sample, 3rd is a dilution series sample)
+```{r}
+plotQualityProfile(fnFs[c(1,3)])
+```
+
+
+
+qualify profile of reverse reads (one negative control and other dilution series sample)
+```{r}
+plotQualityProfile(fnRs[c(1,3)])
+```
+
+define directory for filtered sequences
+
+```{r}
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+```
+
+The primers are at the start of the reads and are a constant length (16 nt, 24 nt). We use `trimLeft = c(FWD_PRIMER_LEN = 16, REV_PRIMER_LEN = 24)` to remove the primers.
+
+Based on the quality scores plots (and Zymo suggestion), we choose to remove FWD reads length less than 320 nt and REV reads length less than 180 nt. 
+
+
+```{r}
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(320, 180), trimLeft = c(16, 24), maxEE = c(10, 10),
+              maxN = 0, truncQ = 6, rm.phix=TRUE,
+              compress=TRUE, multithread=TRUE) 
+
+out
+
+colSums(out)
+```
+
+
+Search for truncQ 
+
+```{r echo=FALSE}
+tab <- "  truncQ search
+| truncQ        | maxEE          | Raw reads | filtered reads |loss   |
+|---------------|:--------------:|----------:|---------------:|------:|
+| 5             | inf            | 323397    | 322633         | 0.23% |
+| 6             | inf            | 323397    | 322633         | 0.23% |
+| 7             | inf            | 323397    | 129232         |60%    |
+| 8             | inf            | 323397    |  22108         |93%    |
+| 9             | inf            | 323397    |   3658         |98.9%  |
+| 10            | inf            | 323397    |   2194         |99.3%  |
+"
+cat(tab) 
+```
+
+Choose trunQ = 6 (less than 6 quality score will give the same number of reads). Now search for maxEE:
+
+```{r echo=FALSE}
+tabEE <- "maxEE search
+| maxEE       | Raw reads | filtered reads |loss   |
+|:-----------:|----------:|---------------:|------:|
+| (2,2)       | 323397    | 101362         | 68.7% |
+| (3,3)       | 323397    | 155451         | 51.9% |
+| (4,4)       | 323397    | 195793         | 39.4% |
+| (5,5)       | 323397    | 225519         | 30.3% |
+| (6,6)       | 323397    | 248425         | 23.2% |
+| (7,7)       | 323397    | 266167         | 17.7% |
+| (8,8)       | 323397    | 280128         | 13.3% |
+| (3,6)       | 323397    | 156084         | 51.7% |
+| (4,6)       | 323397    | 196333         | 39.2% |
+| (10,10)     | 323397    | 299657         |  7.3% |
+"
+cat(tabEE)
+```
+
+We choose maxEE = (10,10) and we loose 7.3\% of reads at the filtering step.
+
+### Learn the Error Rates
+
+```{r}
+errF <- learnErrors(filtFs, multithread=TRUE)
+```
+
+```{r}
+plotErrors(errF, nominalQ=TRUE)
+```
+
+
+```{r}
+system.time(errR <- learnErrors(filtRs, multithread=TRUE))
+```
+
+```{r}
+plotErrors(errR, nominalQ=TRUE)
+```
+
+
+The estimated error rates (black line) are a good fit to the observed rates (points), and the error rates drop with increased quality as expected. Everything looks reasonable.
+
+### Dereplication
+
+Dereplication combines all identical sequencing reads into “unique sequences” with a corresponding “abundance” equal to the number of reads with that unique sequence. 
+
+```{r}
+t1 <- proc.time()
+derepFs <- derepFastq(filtFs, verbose=TRUE)
+derepRs <- derepFastq(filtRs, verbose=TRUE)
+# Name the derep-class objects by the sample names
+names(derepFs) <- sample.names
+names(derepRs) <- sample.names
+
+proc.time() - t1
+```
+
+### Sample Inference
+
+```{r}
+system.time(dadaFs <- dada(derepFs, err=errF, pool = FALSE, multithread=TRUE))
+```
+
+```{r}
+system.time(dadaRs <- dada(derepRs, err=errR, pool = FALSE, multithread=TRUE))
+```
+
+Inspecting the returned dada-class object:
+
+```{r}
+dadaFs[[1]]
+```
+
+```{r}
+dadaRs[[1]]
+```
+
+### Merge paired reads
+```{r}
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose=TRUE, minOverlap = 12, maxMismatch = 0)
+# Inspect the merger data.frame from the first sample
+head(mergers[[1]])
+```
+
+
+```{r eval=FALSE}
+rm(list = c("dadaFs", "dadaRs", "derepFs", "derepRs"))
+```
+
+### Construct sequence table
+
+```{r}
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+# total reads after merging
+sum(seqtab)
+```
+
+examine distribution of sequence length
+```{r}
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+```
+
+remove non-target-length sequences
+```{r}
+seqtab <- seqtab[,nchar(colnames(seqtab)) %in% seq(310,430)]
+dim(seqtab)
+sum(seqtab)
+```
+
+```{r}
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+```
+
+### Remove chimeras
+```{r}
+seqtab.nochim <- removeBimeraDenovo(seqtab, method = "consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+# total reads after removing chimeras
+sum(seqtab.nochim)
+```
+
+
+```{r}
+sum(seqtab.nochim)/sum(seqtab)
+```
+
+If we account for the reads of chimera variants we see they account for about $< 1\%$ of the merged sequence reads. 
+
+
+### Track reads through the pipeline
+
+As a final check of our progress, we’ll look at the number of reads that made it through each step in the pipeline:
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+track
+```
+
+
+### Assign taxonomy
+
+We choose to hit multiple species (`multithread = TRUE`)
+
+```{r}
+taxa <- assignTaxonomy(seqtab.nochim, "./silva_nr_v132_train_set.fa.gz", multithread = TRUE)
+```
+
+```{r}
+taxa <- addSpecies(taxa, "./silva_species_assignment_v132.fa.gz", allowMultiple = TRUE)
+```
+
+Let’s inspect the taxonomic assignments:
+```{r}
+taxa.print <- taxa 
+rownames(taxa.print) <- NULL
+head(taxa.print)
+```
+
+
+### Phyloseq
+
+```{r}
+theme_set(theme_bw())
+```
+
+```{r}
+samples.out <- rownames(seqtab.nochim)
+sampleID <- substr(samples.out, 8,9)
+SampleType <- ifelse(sampleID %in% as.character(seq(1,10)), "Negative", "Standard")
+old.new.sampleID <- readxl::read_excel("./Data/mappingTable.xlsx", col_names = FALSE) %>% data.frame
+colnames(old.new.sampleID) <- c("SubjectID", "Name")
+old.new.sampleID$SubjectID <- gsub("\\_", ".", old.new.sampleID$SubjectID)
+samdf <- data.frame(SubjectID = samples.out, sampleID = samples.out, SampleType = SampleType)
+samdf <- left_join(samdf, old.new.sampleID, by = "SubjectID")
+rownames(samdf) <- samples.out
+```
+
+
+```{r}
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
+               sample_data(samdf), 
+               tax_table(taxa))
+ps
+
+saveRDS(ps, "./Data/ps_zymo.rds")
+```
+
+
+```{r}
+ps <- readRDS("./Data/ps_zymo.rds")
+
+if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
+sum(otu_table(ps))
+```
+
+
+```{r}
+summary(colSums(otu_table(subset_samples(ps, SampleType == "Standard"))))
+summary(colSums(otu_table(subset_samples(ps, SampleType == "Negative"))))
+```
+
+### Alpha diversity
+
+```{r }
+p <- plot_richness(ps, x="SampleType", measures = c("Shannon", "Simpson"), color = "SampleType")
+p <- p + geom_text(aes(label = Name), size = 4, hjust = -0.1) + theme_bw()
+p
+ggsave("./Figures/Zymo_alpha_diversity.eps", plot=p, width = 18, height = 10)
+```
+
+
+### MDS plots
+```{r }
+ps.prop <- transform_sample_counts(ps, function(otu) otu/sum(otu))
+ord.mds.bray <- ordinate(ps.prop, method="MDS", distance="bray")
+evals <- ord.mds.bray$values$Eigenvalues
+p <- plot_ordination(ps.prop, ord.mds.bray, color="SampleType", title="Bray MDS")+ 
+  geom_text(aes(label = Name), size = 4, hjust = 1) + 
+  theme_bw() +
+  coord_fixed(sqrt(evals[2] / evals[1])) +
+  theme(plot.title = element_text(hjust = 0.5))
+p
+ggsave("./Figures/Zymo_MDS_BC.eps", plot=p, width = 12, height = 8)
+```
+
+```{r}
+ncont <- paste0("NegativeControl.",seq(1,10))
+stan <- paste0("Standard.Dilution.1.",c(1,6,36,216,1296,7776,46656,279936))
+#stan <- c(paste0("Standard.Dilution.1.",c(1,6,36,216,1296,7776,46656)),"StandardDilution.1.279936")
+
+sample_data(ps)$Name <- factor(sample_data(ps)$Name, levels = c(ncont,stan))
+```
+
+
+
+### Microbial composition of the ZymoBIOMICS® Microbial Community Standard (Zymo Research, Irvine, CA) measured by genus
+
+Top 20 ASVs in both control and dilution series samples
+
+```{r}
+top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
+ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.top20 <- prune_taxa(top20, ps.top20)
+p <- plot_bar(ps.top20, x="Name", fill="Genus") + facet_wrap(~SampleType, scales="free_x")
+p
+
+ggsave("./Figures/Zymo_barplot_top20.eps", plot=p, width = 12, height = 8)
+```
+
+True ASVs at genus level
+
+```{r}
+# true.com.ASV <- taxa_names(ps)[which(tax_table(ps)[,6] %in% c("Bacillus","Listeria","Staphylococcus", "Lactobacillus", "Escherichia/Shigella", "Enterococcus", "Salmonella", "Pseudomonas"))]
+true.com.ASV <- taxa_names(ps)[c(2:8,11,17,37,22)]
+ps.true <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.true <- prune_taxa(true.com.ASV, ps.true)
+p <- plot_bar(ps.true, x="Name", fill="Genus") + facet_wrap(~SampleType, scales="free_x")
+p
+ggsave("./Figures/Zymo_barplot_true.eps", plot=p, width = 12, height = 8)
+```
+
+Top 20 contaminant ASVs 
+
+```{r}
+# con.ASV <- taxa_names(ps)[which(!(tax_table(ps)[,6] %in% c("Bacillus","Listeria","Staphylococcus", "Lactobacillus", "Escherichia/Shigella", "Enterococcus", "Salmonella", "Pseudomonas")))]
+con.ASV <- taxa_names(ps)[-c(2:8,11,17,37,22)]
+ps.cont <- prune_taxa(con.ASV, ps)
+top20.con <- names(sort(taxa_sums(ps.cont), decreasing=TRUE))[1:20]
+ps.cont <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.cont.top20 <- prune_taxa(top20.con, ps.cont)
+p <- plot_bar(ps.cont.top20, x="Name", fill="Genus") + facet_wrap(~SampleType, scales="free_x")
+p
+
+ggsave("./Figures/Zymo_barplot_cont_top20.eps", plot=p, width = 12, height = 8)
+```
+
+
+### Plot heatmap
+```{r}
+ps.top <- ps 
+top <- names(sort(taxa_sums(ps.top), decreasing=TRUE))[1:30]
+ps.top <- prune_taxa(top, ps.top)
+otu_table(ps.top) <- otu_table(ps.top) +1
+p <- plot_heatmap(ps.top, sample.label = "Name", taxa.label="Genus", sample.order = "Name")
+p
+ggsave("./Figures/heatmap_top.eps", plot = p, width = 12, height = 8)
+```

@@ -9,7 +9,8 @@ data {
   // hyperparameters
   vector<lower=0>[K] alpha;
   vector<lower=0>[V] gamma;
-  vector<lower=0>[D] lambda;//hyper paramter for library size
+  vector<lower=0>[D] mu;//hyper parameter for NB library size
+  vector<lower=0>[D] dis;//hyper parameter for NB library size
 }
 
 parameters {

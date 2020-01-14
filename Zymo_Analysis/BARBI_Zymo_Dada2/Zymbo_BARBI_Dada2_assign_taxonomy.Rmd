@@ -356,9 +356,9 @@ ps <- prune_taxa(prevTaxaP > 0, ps)
 ps
 ```
 
-We identifed 142 ASVs not is any dilution series samples and they are classified as contaminants before using BARBI.
+We identified 142 ASVs not is any dilution series samples, and they are classified as contaminants before using BARBI.
 
-We use BARBI to infer true ASVs in each dilution series sample 
+We use BARBI to infer true ASVs in each dilution series sample. 
 
 Specify that the samples are on the columns and species are on the rows of `otu_table`. 
 

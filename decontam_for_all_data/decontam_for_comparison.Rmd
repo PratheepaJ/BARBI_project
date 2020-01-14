@@ -1,0 +1,533 @@
+---
+title: "decontam"
+author: "PJ, HC, SH, DR"
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+header-includes:
+  - \usepackage{color}
+output: 
+    html_document:
+        toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(decontam)
+library(dplyr)
+library(magrittr)
+library(phyloseq)
+library(ggplot2)
+```
+
+# Use `decontam` on Zymo data
+
+
+### Read phyloseq 
+
+```{r}
+ps <- readRDS("./Data/ps_zymo.rds")
+if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
+```
+
+
+### Change order of sample names
+```{r}
+ncont <- paste0("NegativeControl.",seq(1,10))
+stan <- paste0("Standard.Dilution.1.", c(1, 6, 36, 216, 1296, 7776, 46656, 279936))
+#stan <- c(paste0("Standard.Dilution.1.",c(1,6,36,216,1296,7776,46656)),"StandardDilution.1.279936")
+
+sample_data(ps)$Name <- factor(sample_data(ps)$Name, levels = c(ncont,stan))
+
+sample_names(ps) <- as.character(sample_data(ps)$Name)
+```
+
+
+### Store sequence variant, ASVs, ASV.genus, ASV.genus.species
+```{r}
+ASV <- as.character(paste0("ASV_",seq(1,ntaxa(ps))))
+ASV.Genus <- paste0("ASV_",seq(1,ntaxa(ps)), "_", as.character(tax_table(ps)[,6]))
+ASV.Genus.Species <- paste0(ASV,"_",as.character(tax_table(ps)[,6]), "_",  as.character(tax_table(ps)[,7]))
+
+df.ASV <- data.frame(seq.variant = taxa_names(ps), ASV = ASV, ASV.Genus = ASV.Genus, ASV.Genus.Species = ASV.Genus.Species)
+```
+
+
+```{r}
+taxa_names(ps) <- df.ASV$ASV.Genus.Species
+```
+
+### Microbial composition of the ZymoBIOMICS® Microbial Community Standard (Zymo Research, Irvine, CA) measured 
+
+Top 20 ASVs in both control and dilution series samples
+
+```{r}
+top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
+ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.top20 <- prune_taxa(top20, ps.top20)
+p <- plot_bar(ps.top20, x="Name", fill="Genus") + 
+  facet_wrap(~SampleType, scales="free_x") + 
+  theme_bw() + ylab("Relative abundance")
+p
+```
+
+### True ASVs at genus level
+
+```{r}
+# true.com.ASV <- taxa_names(ps)[which(tax_table(ps)[,6] %in% c("Bacillus","Listeria","Staphylococcus", "Lactobacillus", "Escherichia/Shigella", "Enterococcus", "Salmonella", "Pseudomonas"))]
+true.com.ASV <- taxa_names(ps)[c(2:8,11,17,37,22)]
+ps.true <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.true <- prune_taxa(true.com.ASV, ps.true)
+p <- plot_bar(ps.true, x="Name", fill="Genus") + 
+  facet_wrap(~SampleType, scales="free_x") +
+  theme_bw() + ylab("Relative abundance")
+p
+```
+
+### We have only one block of samples.
+
+```{r}
+blocks <- rep("Set1", nsamples(ps))
+
+sample_data(ps)$block <- blocks
+```
+
+### Remove ASV not in any standard samples
+Identify the species that are not present in at least one `SampleType == Standard` sample and removed them from the phyloseq object. Label these species as contaminants. 
+
+```{r}
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps.standard <- subset_samples(ps, SampleType %in% c("Standard"))
+prevTaxaP <- apply(otu_table(ps.standard), 1, function(x){sum(x>0)})
+
+Contaminants1 <- names(prevTaxaP)[prevTaxaP == 0]
+length(Contaminants1)
+ps <- prune_taxa(prevTaxaP > 0, ps)
+ps
+```
+
+We identified 142 ASVs not is any dilution series samples, and they are classified as contaminants before using BARBI.
+
+Let's use decontam to infer remove contaminant ASVs in dilution series sample.
+
+### Adding True Sample/Control Sample
+```{r}
+sam <- sample_data(ps) %>% data.frame()
+sam <- mutate(sam, Sample_or_Control = ifelse(SampleType == "Standard", "True Sample", "Control Sample"))
+sample_data(ps)$Sample_or_Control = sam$Sample_or_Control
+```
+
+### Inspect library sizes
+```{r}
+df <- as.data.frame(sample_data(ps)) # Put sample_data into a ggplot-friendly data.frame
+df$LibrarySize <- sample_sums(ps)
+df <- df[order(df$LibrarySize),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=LibrarySize, color=Sample_or_Control)) + geom_point()
+```
+
+The library depth is not particularly large in Standard dilution samples than negative controls.
+
+### Identify Contaminants - Frequency
+We cannot used this method because DNA concentration is not available - not available
+
+### Identify Contaminants - Prevalence
+
+The second contaminant identification method we’ll use is the “prevalence” method. In this method, the prevalence (presence/absence across samples) of each sequence feature in true positive samples is compared to the prevalence in negative controls to identify contaminants.
+
+In our phyloseq object, "Sample_or_Control" is the sample variable that holds the negative control information. We’ll summarize that data as a logical variable, with TRUE for control samples, as that is the form required by isContaminant.
+
+```{r}
+sample_data(ps)$is.neg <- sample_data(ps)$Sample_or_Control == "Control Sample"
+contamdf.prev <- isContaminant(ps, method = "prevalence",
+                               neg="is.neg")
+table(contamdf.prev$contaminant)
+```
+
+We only identified only 6 contaminants.
+
+```{r}
+tax_table(ps)[which(contamdf.prev$contaminant), "Species"]
+```
+
+To remove more contaminant, we can use different threshold
+
+### Change the threshold
+In the prevalence test there is a special value worth knowing, threshold=0.5, that will identify as contaminants all sequences thare are more prevalent in negative controls than in positive samples. Let’s try using this more aggressive classification threshold rather than the default.
+
+
+```{r}
+contamdf.prev05 <- isContaminant(ps, method="prevalence",
+                                 neg="is.neg", 
+                                 threshold=0.5)
+table(contamdf.prev05$contaminant)
+```
+
+We idetified 13 contaminants. Let's see what are they.
+
+```{r}
+tax_table(ps)[which(contamdf.prev05$contaminant), "Species"]
+
+```
+
+decontam identify more contaminants with threshold .5. 
+
+### Prevalence of taxa in negative and standard dilution samples
+
+Let’s take a look at the number of times several of these taxa were observed in negative controls and positive samples.
+```{r}
+# Make phyloseq object of presence-absence in negative controls and true samples
+ps.pa <- transform_sample_counts(ps, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$Sample_or_Control == "Control Sample", ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$Sample_or_Control == "True Sample", ps.pa)
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                      contaminant=contamdf.prev$contaminant)
+ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() +
+  xlab("Prevalence (Negative Controls)") + ylab("Prevalence (True Samples)")
+```
+
+deontam still needs to identify more contaminant. When we increas threshold, decontam identifies increasing number of contaminants, but we are not sure which is the correct threshold.
+
+# Use `decontam` on ED data
+
+### Read phyloseq object 
+```{r}
+ps <- readRDS("./Data/ps_sirs_updated_may_1_2018.rds")
+ps
+if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
+
+ps <- subset_samples(ps, !(Sample_Type == "Library_Control"))
+```
+
+### Replace labels and remove healthy subjects
+```{r}
+mapp <- readxl::read_excel("./Data/Pt_and_P.xlsx")
+sample_names(ps)[which(sample_names(ps) %in% mapp$P)] <- mapp$Pt
+sample_data(ps)$SampleCode <- sample_names(ps)
+
+ps <- subset_samples(ps, !(SampleType == "Healthy"))
+```
+
+### Identify batches
+```{r}
+set1 <- c("1","2","3","4","11","12")
+set2 <- c("5","6","7","8","9","10")
+setP <- "P"
+ext.num <- sample_data(ps)$Extraction_Number
+
+blocks <- ifelse(ext.num %in% set1, "Set1", ifelse(ext.num %in% set2, "Set2","SetP"))
+
+sample_data(ps)$block <- blocks
+```
+
+### Remove healthy subjects
+
+Subset samples such that only patient plasma and negative control samples are included in the final phyloseq object. 
+
+```{r choose_samples}
+ps <- subset_samples(ps,Sample_Type %in% c("Plasma","Control"))
+```
+
+###  Preprocessing
+
+Identify the species that are not present in at least one plasma sample and removed those species from the phyloseq object. Label these species as contaminants. 
+
+```{r}
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps_plasma <- subset_samples(ps,Sample_Type %in% c("Plasma"))
+prevTaxaP <- apply(otu_table(ps_plasma), 1 ,function(x){sum(x>0)})
+
+Contaminants1 <- names(prevTaxaP)[prevTaxaP==0]
+ps <- prune_taxa(prevTaxaP > 0,ps)
+ps
+```
+
+### Adding True Sample/Control Sample
+```{r}
+sam <- sample_data(ps) %>% data.frame()
+sam <- mutate(sam, Sample_or_Control = ifelse(SampleType == "SIRS", "True Sample", "Control Sample"))
+sample_data(ps)$Sample_or_Control = sam$Sample_or_Control
+```
+
+### Inspect library sizes
+```{r}
+df <- as.data.frame(sample_data(ps)) # Put sample_data into a ggplot-friendly data.frame
+df$LibrarySize <- sample_sums(ps)
+df <- df[order(df$LibrarySize),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=LibrarySize, color=Sample_or_Control)) + geom_point()
+```
+
+
+The library sizes of the plasma samples primarily fall from 2 to 5000 reads and there are some high-read outliers. The negative control samples have large  number of reads (this contrasts with the expectation stated in decontam package). 
+
+### Identify samples by blocks
+```{r}
+source("psBlockResults.R")
+psBlockResult <- psBlockResults(ps, sampleTypeVar = "Sample_Type", caselevels = c("Plasma"), controllevel= "Control", sampleName = "SampleCode", blockVar = "block")
+
+psByBlock <- psBlockResult[[1]]
+```
+
+### Identify Contaminants - Frequency
+In this method, the distribution of the frequency of each sequence feature as a function of the input DNA concentration is used to identify contaminants.
+
+In our phyloseq object, "Conc.ng.ul" is the sample variable that holds the concentration information:
+```{r}
+contamdf.freq.all.blocks = lapply(psByBlock, function(x){
+  isContaminant(x, method="frequency", conc="Conc.ng.ul")
+})
+# contamdf.freq <- isContaminant(ps, method="frequency", conc="Conc.ng.ul")
+head(contamdf.freq.all.blocks[[1]])
+head(contamdf.freq.all.blocks[[2]])
+head(contamdf.freq.all.blocks[[3]])
+```
+
+```{r}
+table(contamdf.freq.all.blocks[[1]]$contaminant)
+table(contamdf.freq.all.blocks[[2]]$contaminant)
+table(contamdf.freq.all.blocks[[3]]$contaminant)
+```
+
+decontam identified only 1 species and 2 species as contaminants in block 1 and 2, respectively. 
+
+```{r}
+head(which(contamdf.freq.all.blocks[[1]]$contaminant))
+head(which(contamdf.freq.all.blocks[[2]]$contaminant))
+head(which(contamdf.freq.all.blocks[[3]]$contaminant))
+```
+
+```{r}
+plot_frequency(psByBlock[[1]], taxa_names(ps)[c(1,3)], conc="Conc.ng.ul") +
+  xlab("DNA Concentration (PicoGreen fluorescent intensity)")
+```
+
+
+### Identify Contaminants - Prevalence
+
+The second contaminant identification method we’ll use the “prevalence” method. In this method, the prevalence (presence/absence across samples) of each sequence feature in true positive samples is compared to the prevalence in negative controls to identify contaminants.
+
+In our phyloseq object, "Sample_or_Control" is the sample variable that holds the negative control information. We’ll summarize that data as a logical variable, with TRUE for control samples, as that is the form required by isContaminant.
+
+```{r}
+psByBlock = lapply(psByBlock, function(x){
+  sample_data(x)$is.neg = sample_data(x)$Sample_or_Control == "Control Sample"
+  return(x)
+})
+
+# sample_data(ps)$is.neg <- sample_data(ps)$Sample_or_Control == "Control Sample"
+
+contamdf.prev.all.blocks = lapply(psByBlock, function(y){
+  isContaminant(y, method = "prevalence", neg="is.neg")
+})
+# contamdf.prev <- isContaminant(ps, method = "prevalence", neg="is.neg")
+# table(contamdf.prev$contaminant)
+```
+
+```{r}
+table(contamdf.prev.all.blocks[[1]]$contaminant)
+table(contamdf.prev.all.blocks[[2]]$contaminant)
+table(contamdf.prev.all.blocks[[3]]$contaminant)
+```
+
+Prevalence-based contaminant identification has identified 570, 813, and 351 contaminants than did frequency-based method.
+
+Use different threshold
+```{r}
+
+contamdf.prev05.all.blocks = lapply(psByBlock, function(y){
+  isContaminant(y, method = "prevalence", neg="is.neg", threshold = 0.5)
+})
+# contamdf.prev05 <- isContaminant(ps, method="prevalence", neg="is.neg", threshold = 0.5)
+table(contamdf.prev05.all.blocks[[1]]$contaminant)
+table(contamdf.prev05.all.blocks[[2]]$contaminant)
+table(contamdf.prev05.all.blocks[[3]]$contaminant)
+```
+
+Prevalence-based contaminant identification with cutoff .05 has identified more (663, 946, and 427) contaminants.
+
+
+### Check Pt\_113
+
+Pt\_113 is in block 1
+```{r}
+head(which(!contamdf.prev05.all.blocks[[1]]$contaminant))
+noncont = tax_table(ps)[which(!contamdf.prev05.all.blocks[[1]]$contaminant), ]
+### Do we have Klebsiella_pneumoniae in block 1?
+sum(noncont %in% "s__Klebsiella_pneumoniae")
+```
+
+From the clinical tests/culture, it is known that `Klebsiella_pneumoniae` is in subject Pt\_113, but this species is identified as contaminant.
+
+
+# decontam on healthy flossing data
+
+
+```{r}
+ps <- readRDS("./Data/pshf.rds")
+ps
+if(dim(otu_table(ps))[1]!=ntaxa(ps)){
+  otu_table(ps) <- t(otu_table(ps))
+  }
+```
+
+###  Identifying batches
+
+
+```{r adding_blocks}
+set1 <- c("FL002","FL003","FL004","FL005")
+set2 <- c("FL006","FL007","FL008","FL009","FL010","FL011")
+
+#       the following negative controls are in set 2 only.
+nctrl <- c("Water.Keck.1","Phix.1","Phix.2","Water.ctrl.1","Water.ctrl.2")
+
+ext.num <- sample_data(ps)$SubjectName
+blocks <-ifelse(ext.num %in% set1, "Set1", "Set2")
+
+sample_data(ps)$block <- blocks
+```
+
+
+###  Preprocessing
+
+Identify the species that are not present in at least one plasma sample and removed them from the phyloseq object. Label these species as contaminants. 
+
+```{r}
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps_plasma <- subset_samples(ps,Sample_Type %in% c("Plasma"))
+prevTaxaP <- apply(otu_table(ps_plasma), 1 ,function(x){sum(x>0)})
+
+Contaminants1 <- names(prevTaxaP)[prevTaxaP == 0]
+ps <- prune_taxa(prevTaxaP > 0, ps)
+ps
+```
+
+### Adding True Sample/Control Sample
+```{r}
+sam <- sample_data(ps) %>% data.frame()
+sam <- mutate(sam, Sample_or_Control = ifelse(Sample_Type == "Plasma", "True Sample", "Control Sample"))
+sample_data(ps)$Sample_or_Control = sam$Sample_or_Control
+```
+
+### Inspect library sizes
+```{r}
+df <- as.data.frame(sample_data(ps)) # Put sample_data into a ggplot-friendly data.frame
+df$LibrarySize <- sample_sums(ps)
+df <- df[order(df$LibrarySize),]
+df$Index <- seq(nrow(df))
+ggplot(data = df, aes(x = Index, y = LibrarySize, color = Sample_or_Control)) + 
+  geom_point()
+```
+
+
+Control samples have larger reads than plasma samples.
+
+
+### Identify samples by blocks
+```{r}
+source("psBlockResults.R")
+psBlockResult <- psBlockResults(ps, sampleTypeVar = "Sample_Type", caselevels = c("Plasma"), controllevel= "Control", sampleName = "SampleCode", blockVar = "block")
+
+psByBlock <- psBlockResult[[1]]
+```
+
+### Identify Contaminants - Frequency
+In this method, the distribution of the frequency of each sequence feature as a function of the input DNA concentration is used to identify contaminants.
+
+In our phyloseq object, "Conc.ng.ul" is the sample variable that holds the concentration information:
+```{r}
+psByBlock = lapply(psByBlock, function(x){
+  sample_data(x)$Conc.ng.ul = sample_data(x)$Conc.ng.ul + 0.001 # there is some samples with 0.00
+  return(x)
+})
+
+contamdf.freq.all.blocks = lapply(psByBlock, function(x){
+  isContaminant(x, method="frequency", conc = "Conc.ng.ul")
+})
+# contamdf.freq <- isContaminant(ps, method="frequency", conc="Conc.ng.ul")
+head(contamdf.freq.all.blocks[[1]])
+head(contamdf.freq.all.blocks[[2]])
+
+```
+
+```{r}
+table(contamdf.freq.all.blocks[[1]]$contaminant)
+table(contamdf.freq.all.blocks[[2]]$contaminant)
+
+```
+
+decontam identified only 5 species and 5 species as contaminants in block 1 and 2, respectively. 
+
+```{r}
+head(which(contamdf.freq.all.blocks[[1]]$contaminant))
+head(which(contamdf.freq.all.blocks[[2]]$contaminant))
+
+```
+
+```{r}
+plot_frequency(psByBlock[[1]], 
+               taxa_names(ps)[c(1,2)], 
+               conc="Conc.ng.ul") +
+  xlab("DNA Concentration (PicoGreen fluorescent intensity)")
+```
+
+We know that there are more than 5 contaminants in each block, but decontam didn't identify them.
+
+### Identify Contaminants - Prevalence
+
+The second contaminant identification method we’ll use the “prevalence” method. In this method, the prevalence (presence/absence across samples) of each sequence feature in true positive samples is compared to the prevalence in negative controls to identify contaminants.
+
+In our phyloseq object, "Sample_or_Control" is the sample variable that holds the negative control information. We’ll summarize that data as a logical variable, with TRUE for control samples, as that is the form required by isContaminant.
+
+```{r}
+psByBlock = lapply(psByBlock, function(x){
+  sample_data(x)$is.neg = sample_data(x)$Sample_or_Control == "Control Sample"
+  return(x)
+})
+
+# sample_data(ps)$is.neg <- sample_data(ps)$Sample_or_Control == "Control Sample"
+
+contamdf.prev.all.blocks = lapply(psByBlock, function(y){
+  isContaminant(y, method = "prevalence", neg="is.neg")
+})
+# contamdf.prev <- isContaminant(ps, method = "prevalence", neg="is.neg")
+# table(contamdf.prev$contaminant)
+```
+
+```{r}
+table(contamdf.prev.all.blocks[[1]]$contaminant)
+table(contamdf.prev.all.blocks[[2]]$contaminant)
+
+```
+
+Prevalence-based contaminant identification has identified 195, and 419 contaminants than did frequency-based method.
+
+Use different threshold (deafult threshold is .1)
+```{r}
+
+contamdf.prev05.all.blocks = lapply(psByBlock, function(y){
+  isContaminant(y, method = "prevalence", neg="is.neg", threshold = 0.5)
+})
+# contamdf.prev05 <- isContaminant(ps, method="prevalence", neg="is.neg", threshold = 0.5)
+table(contamdf.prev05.all.blocks[[1]]$contaminant)
+table(contamdf.prev05.all.blocks[[2]]$contaminant)
+
+```
+
+Prevalence-based contaminant identification with cutoff .05 has identified more (571, 902) contaminants.
+
+
+### Check FL003 subject
+
+This subject shows some true species immediately after flossing and 3 second thereafter.
+```{r}
+head(which(!contamdf.prev05.all.blocks[[1]]$contaminant))
+noncont = tax_table(ps)[which(!contamdf.prev05.all.blocks[[1]]$contaminant), "Species"]
+head(noncont)
+
+```
+
+This noncontaminant list has a lot of known contaminants.
+
