@@ -1,0 +1,175 @@
+---
+title: "PCA on ranks"
+author: "PJ, FS, HC, SH"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+header-includes:
+    - \usepackage{bm}
+output: 
+  html_document:
+    toc: true
+---
+
+There are two different batches. The DNA contaminants are different in each batch. We consider batch as block in the code.
+
+```{r}
+rm(list = ls())
+```
+
+load packages:
+```{r}
+library(DESeq2)
+library(phyloseq)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+Read phyloseq .
+```{r }
+ps <- readRDS("./Data/pshf.rds")
+```
+
+
+
+Adding blocks.
+```{r include=FALSE}
+set1 <- c("FL002","FL003","FL004","FL005")
+set2 <- c("FL006","FL007","FL008","FL009","FL010","FL011")
+
+#       the following negative controls are in set 2 only.
+nctrl <- c("Water.Keck.1","Phix.1","Phix.2","Water.ctrl.1","Water.ctrl.2")
+
+ext.num <- sample_data(ps)$SubjectName
+blocks <-ifelse(ext.num %in% set1, "Set1", "Set2")
+
+sample_data(ps)$block <- blocks
+```
+
+
+Preprocessing samples.
+```{r include=FALSE}
+if (dim(otu_table(ps))[1] != ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
+
+#   total reads per sample
+totalReads <- colSums(otu_table(ps))
+
+#   distribution of total reads per sample
+hist(log(totalReads),yaxs = "i",xaxs = "i",main = "Distribution of total reads per sample",breaks = 50)
+
+#   select plasma samples and negative controls 
+ps <- subset_samples(ps,Sample_Type %in% c("Plasma","Control"))
+```
+
+Preprocessing taxa. 
+```{r include=FALSE}
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps_plasma <- subset_samples(ps,Sample_Type %in% c("Plasma"))
+prevTaxaP <- apply(otu_table(ps_plasma), 1 ,function(x){sum(x>0)})
+
+Contaminants1 <- names(prevTaxaP)[prevTaxaP==0]
+ps <- prune_taxa(prevTaxaP > 0,ps)
+```
+
+Rank transformation.
+```{r}
+psR <- transform_sample_counts(ps, function(x){
+  x <- rank(x)
+  x <- x-1000
+  x[x<1] <- 1
+  return(x)
+  })
+
+```
+
+<!-- PCoA on Euclidean distance of ranks -->
+<!-- ```{r fig.width=7.5, fig.height=4.5} -->
+<!-- #   ps.mds is a rank of counts -->
+<!-- psRank <- psR -->
+
+<!-- mds <- ordinate(psRank, method = "MDS", distance = "euclidean") -->
+
+<!-- #   Let us look at the scree plot  -->
+<!-- evals <- mds$values$Eigenvalues -->
+
+<!-- #   percentage of variance explained by each axis -->
+<!-- df <- data.frame(y = evals/sum(evals),x = 1:length(evals)) -->
+
+<!-- #   scree plot for Euclidean MDS -->
+<!-- ggplot(df[1:10,],aes(x,y))+ -->
+<!--     geom_point()+ -->
+<!--   xlab("Index")+ -->
+<!--   ylab("Eigenvalue")+ -->
+<!--     labs(title="Scree plot for Euclidean - MDS")+ -->
+<!--     theme(plot.title = element_text(hjust = .5)) -->
+
+<!-- #   ordination plot -->
+<!-- plot_ordination(physeq = psRank, ordination = mds,type = "samples",shape = "Sample_Type", color = "block")+ -->
+<!--     labs(title="MDS on Euclidean distance of ranks")+ -->
+<!--     coord_fixed(sqrt(evals[2]/evals[1]))+ -->
+<!--     geom_point(size=1)+ -->
+<!--   theme(plot.title = element_text(hjust = .5))+ -->
+<!--     geom_text(mapping=aes(label = block),size=3,vjust=1.5)+ -->
+<!--     theme(plot.title = element_text(size=6),legend.text = element_text(size=6),legend.title = element_text(size=6)) -->
+<!-- ``` -->
+
+<!-- The scores are linear combination of ranks for each species, so the axes values are larger. -->
+
+
+The PCA plot resulting from the PCA after the truncated-ranking transformation.
+
+```{r}
+library(ade4)
+abund_ranks <- otu_table(psR) %>% t %>% data.frame
+ranks_pca <- dudi.pca(abund_ranks, scannf = F, nf = 3)
+row_scores <- data.frame(li = ranks_pca$li,
+                            SampleCode = rownames(abund_ranks))
+#row_scores$SampleID <- as.character(row_scores$SampleID)
+#samdf <- sample_data(psR) %>% data.frame
+#samdf$SampleID <- as.character(samdf$SampleID)
+
+row_scores <- row_scores %>%
+  left_join(sample_data(psR) %>% data.frame())
+
+row_scores$block <- factor(row_scores$block)
+
+evals_prop <- 100 * (ranks_pca$eig / sum(ranks_pca$eig))
+
+evals <- ranks_pca$eig
+
+# p <- ggplot() +
+#   geom_point(data = row_scores, aes(x = li.Axis1, y = li.Axis2, shape = Sample_Type, color = block), size = 3)  +
+#   guides(col = guide_legend(override.aes = list(size = 3))) +
+#   labs(x = sprintf("Axis 1 [%s%% variance]", round(evals_prop[1], 1)), 
+#        y = sprintf("Axis 2 [%s%% variance]", round(evals_prop[2], 1))) +
+#   ggtitle("")+
+#   theme_bw() +
+#   theme(panel.border = element_rect(color = "#787878", fill = alpha("white", 0)), plot.title = element_text(hjust = .5), legend.title=element_text(size = 8), legend.text=element_text(size=8), axis.text = element_text(size = 1),  axis.title = element_text(size = 10)) + guides(shape = guide_legend(title="Sample Type"),color = guide_legend(title = "Block"))
+# 
+#  # coord_fixed(sqrt(ranks_pca$eig[2] / ranks_pca$eig[1])) +
+# 
+# p
+
+p <- ggplot() +
+  geom_point(data = row_scores, aes(x = li.Axis1, y = li.Axis2, color = Sample_Type, fill = block, shape = block), size = 3)  +
+  scale_color_grey() +
+  guides(col = guide_legend(override.aes = list(size = 3))) +
+  labs(x = sprintf("Axis 1 [%s%% variance]", round(evals_prop[1], 1)), 
+       y = sprintf("Axis 2 [%s%% variance]", round(evals_prop[2], 1))) +
+  ggtitle("")+
+  theme_bw() +
+  theme(panel.border = element_rect(color = "#787878", 
+    fill = alpha("white", 0)), 
+    plot.title = element_text(hjust = .5),
+    legend.title=element_text(size = 8),
+    legend.text=element_text(size=8), 
+    axis.text = element_text(size = 1),  
+    axis.title = element_text(size = 10)) + 
+  guides(shape = guide_legend(title="Block"),
+    color = guide_legend(title = "Sample Type"))
+
+ # coord_fixed(sqrt(ranks_pca$eig[2] / ranks_pca$eig[1])) +
+
+p
+
+ggsave("./Figures/PCA_flossing_2.eps", plot=p, width = 6, height = 4)
+```
