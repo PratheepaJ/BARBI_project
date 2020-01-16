@@ -5,15 +5,17 @@ date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: 
   BiocStyle::html_document
 params:
-  K: 10
-  R: 500
+  K: 4
+  R: 200
 ---
 
 # Outline
 
 We have 10 negative control samples and serial dilution of ZymoBIOMICS® Microbial Community Standard.
 
-Looking at the DADA2 pipeline ASVs 2, 3, 4, 5, 6, 7, 8, 11, 17, 37, 22 are in the ZymoBIOMICS® Microbial Community Standard. We used BARBI to identify DNA contaminants. We will determine using LDA whether DNA contamiantion have any latent communities (topics).
+Looking at the DADA2 pipeline ASVs 2, 3, 4, 5, 6, 7, 8, 11, 17, 37, 22 are in the ZymoBIOMICS® Microbial Community Standard corresponding to eight bacterial species. We used BARBI to identify DNA contaminants. 
+
+We provide a latent Dirichlet allocation (LDA) to identify bacterial communities related to contaminant taxa. This modeling helps to identify contaminant sources associated with each bacterial community. 
 
 
 # Set-up
@@ -21,9 +23,9 @@ Looking at the DADA2 pipeline ASVs 2, 3, 4, 5, 6, 7, 8, 11, 17, 37, 22 are in th
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, 
   message = FALSE, 
-  warning = FALSE, 
-  fig.width = 20, 
-  fig.height = 20)
+  warning = FALSE,
+  fig.width = 12,
+  fig.height = 8)
 ```
 
 ```{r read_arg}
@@ -50,7 +52,7 @@ library(wesanderson)
 library(ggheatmap)# Github repo: #devtools::install_github("jakobbossek/ggheatmap")
 library(reshape2)
 library(DESeq2)
-library(Rcpp)
+#library(Rcpp)
 library(ape)
 ```
 
@@ -75,90 +77,49 @@ sample_data(ps)$Name = factor(sample_data(ps)$Name, levels = c(ncont,stan))
 sample_names(ps) = as.character(sample_data(ps)$Name)
 ```
 
-## Store sequence variants, ASVs, ASV.genus, ASV.genus.species
-```{r}
-ASV = as.character(paste0("ASV_", seq(1,ntaxa(ps))))
+## Remove unequal library size depth effect
+```{r eval=FALSE, include=FALSE}
+ot = otu_table(ps) %>% data.frame()
+geo_mean = function(x) {
+        if(all(x == 0)){
+            val = 0
+        }else{
+            val = exp(sum(log(x[x > 0]))/length(x))
+        }
+        return(val)
+    }
 
-ASV.Genus = paste0("ASV_", seq(1,ntaxa(ps)), "_", as.character(tax_table(ps)[,6]))
+geom_mean_row = apply(ot, 1, FUN = geo_mean)
 
-ASV.Genus.Species = paste0(ASV, "_", as.character(tax_table(ps)[,6]), "_", as.character(tax_table(ps)[,7]))
 
-df.ASV = data.frame(seq.variant = taxa_names(ps), ASV = ASV, ASV.Genus = ASV.Genus, ASV.Genus.Species = ASV.Genus.Species)
+dj = estimateSizeFactorsForMatrix(ot, median, geoMeans = geom_mean_row)
+
+ot = t(t(ot)/dj)
+
+ot = apply(ot , c(1,2), function(y){ as.integer(y)})
+colnames(ot) = sample_names(ps)
+
+ps = phyloseq(otu_table(ot, taxa_are_rows = TRUE), sample_data(ps), tax_table(ps))
+ps
 ```
 
-## Assign taxa names
-```{r }
-taxa_names(ps) = df.ASV$ASV.Genus.Species
-```
+<!-- ## Store sequence variants, ASVs, ASV.genus, ASV.genus.species -->
+<!-- ```{r} -->
+<!-- ASV = as.character(paste0("ASV_", seq(1,ntaxa(ps)))) -->
 
-## Microbial composition of the ZymoBIOMICS® microbial community standard (Zymo Research, Irvine, CA) measured 
+<!-- ASV.Genus = paste0("ASV_", seq(1,ntaxa(ps)), "_", as.character(tax_table(ps)[,6])) -->
 
-True ASVs at genus level
+<!-- ASV.Genus.Species = paste0(ASV, "_", as.character(tax_table(ps)[,6]), "_", as.character(tax_table(ps)[,7])) -->
 
-```{r}
-# true.com.ASV = taxa_names(ps)[which(tax_table(ps)[,6] %in% c("Bacillus","Listeria","Staphylococcus", "Lactobacillus", "Escherichia/Shigella", "Enterococcus", "Salmonella", "Pseudomonas"))]
-true.com.ASV = taxa_names(ps)[c(2:8,11,17,37,22)]
-ps.true = transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
-ps.true = prune_taxa(true.com.ASV, ps.true)
-ps.true
-```
+<!-- df.ASV = data.frame(seq.variant = taxa_names(ps), ASV = ASV, ASV.Genus = ASV.Genus, ASV.Genus.Species = ASV.Genus.Species) -->
+<!-- ``` -->
 
-
-### Create a list of true ASVs in each diluted sample
-
-```{r}
-true.com.ASV = taxa_names(ps)[c(2:8,11,17,22,37)]
-# true.com.ASV = taxa_names(ps)[which((tax_table(ps)[,6] %in% c("Bacillus","Listeria","Staphylococcus", "Lactobacillus", "Escherichia/Shigella", "Enterococcus", "Salmonella", "Pseudomonas")))]
-
-# true.com.ASV = taxa_names(ps)[which((tax_table(ps)[,6] %in% c("Bacillus","Listeria","Staphylococcus", "Lactobacillus", "Escherichia/Shigella", "Enterococcus", "Salmonella", "Pseudomonas"))&(!is.na(tax_table(ps)[,7])))]
-
-diluted.sample.names = sample_names(ps)[3:10]
-
-trueSeq = function(sample.name, true.com.ASV){
-  df.sample.i = data.frame(ot = otu_table(ps)[, sample.name])
-  names(df.sample.i) = "ot"
-  df.sample.i = mutate(df.sample.i, ASV = rownames(df.sample.i))
-  df.sample.i.true.seq = filter(df.sample.i, (ot > 0) & (as.character(ASV) %in% true.com.ASV))
-  true.seq.sample.i = as.character(df.sample.i.true.seq$ASV)
-  return(true.seq.sample.i)
-}
+<!-- ## Assign taxa names -->
+<!-- ```{r } -->
+<!-- taxa_names(ps) = df.ASV$ASV.Genus.Species -->
+<!-- ``` -->
 
 
-true.seq.all.samples = lapply(diluted.sample.names, FUN = trueSeq, true.com.ASV = true.com.ASV)
-
-##true.seq.all.samples
-```
-
-### Number of true ASVs in each dilution series sample
-```{r}
-number.of.true.ASVs = lapply(true.seq.all.samples, 
-  function(x) {length(x)})
-number.of.true.ASVs
-```
-
-### Number of unique true ASV in all samples
-```{r}
-number.of.unique.ASVs.in.all.samples = length(unique(unlist(true.seq.all.samples)))
-number.of.unique.ASVs.in.all.samples
-```
-
-
-### Check the percentage of eleven ASVs in each dilution series sample
-
-```{r}
-ps.prop = transform_sample_counts(ps, function(otu) otu/sum(otu)*100)
-ps.true = prune_taxa(unique(unlist(true.seq.all.samples)), ps)
-ps.prop.true = prune_taxa(taxa_names(ps.true), ps.prop)
-dt = otu_table(subset_samples(ps.prop.true, 
-  SampleType == "Standard")) %>% data.frame()
-colnames(dt) = sample_data(subset_samples(ps.prop.true, 
-  SampleType == "Standard"))$Name
-#rownames(dt) = df.ASV$ASV.Genus[which(as.character(df.ASV$ASV.Genus.Species) %in% rownames(dt))]
-rownames(dt) = df.ASV$ASV.Genus.Species[which(as.character(df.ASV$ASV.Genus.Species) %in% rownames(dt))]
-dt = round(dt, digits = 0)
-library(knitr)
-kable(dt)
-```
 
 ### Adding blocks
 
@@ -198,11 +159,11 @@ table(sample_data(ps)$SampleType, sample_data(ps)$block)
 colSums(otu_table(ps))
 ```
 
-##      Prepare the phyloseq object for the Bayesian inference
+##  Prepare the phyloseq object for the Bayesian inference
 
-We use Bayesian inference to identify contaminants in each block separately to account for the batch-effects of contamination. In Zymo data, we have batch effects.
+Zymo does not have batch effect. 
 
-Thus, split the phyloseq object into multiple phyloseq objects corresponding to each block, and store the phyloseq objects as a list of phyloseq objects, `psByBlock`. 
+If there is bacth effect, we split the phyloseq object into multiple phyloseq objects corresponding to each block, and store the phyloseq objects as a list of phyloseq objects, `psByBlock`. 
 
 Select negative control samples from each block and store as a list of phyloseq objects, `psNCbyBlock`. 
 
@@ -213,38 +174,39 @@ Select all plasma samples from each block and store as a list of phyloseq object
 ```{r list_of_phyloseq}
 source("psBlockResults.R")
 psBlockResult = psBlockResults(ps, 
-  sampleTypeVar = "SampleType", caselevels = c("Standard"), controllevel="Negative", sampleName = "Name", blockVar = "block")
+                               sampleTypeVar = "SampleType",
+                               caselevels = c("Standard"),
+                               controllevel="Negative",
+                               sampleName = "Name", 
+                               blockVar = "block")
 
 psByBlock = psBlockResult[[1]]
 psNCbyBlock = psBlockResult[[2]]
 psallzeroInNC = psBlockResult[[3]]
 psPlByBlock = psBlockResult[[4]]
 
-# st = sample_names(psByBlock[[1]])[-c(4:10)]
-# psByBlock[[1]] = subset_samples(psByBlock[[1]], SampleCode %in% st)
 ```
 
 ## LDA
 
-Each sample is modeled as having a mixture of topics, with each ASV drawn from a topic based on mixing proportions.
 
 
-### LDA on specimen and control samples
+### LDA on dilution series samples and negative controls
 
 We choose the number of topics to be 4.
 
 Read stan model
-```{r eval=FALSE}
+```{r}
 f <- stan_model(file = "lda.stan")
 ```
-
-
 
 Make stan data
 ```{r}
 K = 4 # number of topics
 ps = psByBlock[[1]] 
-short.sample.names = c(paste0("NC.", c(1,10)), paste0("Di.", seq(1,8)), paste0("NC.", seq(2,9)))
+short.sample.names = c(paste0("NC.", c(1,10)), 
+                       paste0("Di.", seq(1,8)), 
+                       paste0("NC.", seq(2,9)))
 sample_names(ps) = short.sample.names
 
 x = t(get_taxa(ps))
@@ -258,14 +220,17 @@ stan.data <- list(K = K,
 )
 ```
 
-```{r eval=FALSE}
+```{r}
+t1 = proc.time()
 stan.fit = sampling(f, 
   data = stan.data, 
   iter = iter, 
   chains = 2, 
-  sample_file = "sample_file_ER.rds",
-  diagnostic_file = "diagnostic_file_ER.rds",
+  sample_file = "./Results/sample_file_Zymo",
+  diagnostic_file = "./Results/diagnostic_file_Zymo",
   cores = 2)
+
+proc.time() - t1
 
 saveRDS(stan.fit, file = "./Results/Zymo_LDA.rds")
 ```
@@ -277,7 +242,7 @@ stan.fit = readRDS("./Results/Zymo_LDA.rds")
 ### Extract posterior samples 
 - $\beta$ and $\theta$
 ```{r}
-samples <- rstan::extract(stan.fit)
+samples = rstan::extract(stan.fit, permuted = TRUE, inc_warmup = FALSE, include = TRUE)
 ```
 
 ### Posterior distribution of topic in each sample 
@@ -286,100 +251,53 @@ samples <- rstan::extract(stan.fit)
 theta = samples$theta # chain * sample * topic
 # find theta distirbution of each topic in each sample
 names(theta) = c("theta", "Sample", "Topic")
+dimnames(theta)[[2]] = sample_names(ps)
+dimnames(theta)[[3]] = c(paste0("Bacterial Community ", seq(1,K)))
+
 theta.all = melt(theta)
 colnames(theta.all) = c("Chain", "Sample", "Topic", "topic.dis")
+
 theta.all$Sample = factor(theta.all$Sample)
-levels(theta.all$Sample) = sample_names(ps)
 theta.all$Topic = factor(theta.all$Topic)
-levels(theta.all$Topic) = c(paste0("Topic_", seq(1,K)))
 
 # add control or dilution series
-theta.all =  mutate(theta.all, Group = ifelse(substr(Sample,1,1)=="D","Dilution", "Control"))
+sam = sample_data(ps) %>% data.frame()
+sam$unique_names = rownames(sam)
+theta.all = left_join(theta.all, sam, by =c("Sample"= "unique_names"))
 
-theta.all$Group = factor(theta.all$Group)
-```
+# theta.all =  mutate(theta.all, Group = ifelse(substr(Sample,1,1)=="D","Dilution", "Control"))
 
-### Plot topic distribution in each sample 
-```{r}
-col.topic = c(wes_palette("Cavalcanti1", n = 2), wes_palette("Darjeeling1", n = 2))
-# p = ggplot() + 
-#   geom_density(data = theta.all ,aes(x = topic.dis, y = ..scaled.., col = Topic, fill=Topic)) + 
-#   facet_grid(Sample ~ Group, scales = "fixed") + 
-#   scale_color_manual(values = col.topic)+
-#   scale_fill_manual(values = col.topic)+
-#   ylab("density") +
-#   xlab("") + 
-#   ggtitle("") + 
-#   theme(plot.title = element_text(hjust = 0.5, size = 15), strip.text.y= element_text(size = 12), strip.text.x = element_text(size = 12))
-
-p = ggplot() + 
-  geom_density(data = theta.all ,aes(x = topic.dis, y = ..scaled.., linetype = Topic)) + 
-  facet_grid(Sample ~ Group, scales = "fixed") +
-  ylab("density") +
-  xlab("") + 
-  ggtitle("") + 
-  theme(plot.title = element_text(hjust = 0.5, size = 15), 
-    strip.text.y= element_text(size = 12), 
-    strip.text.x = element_text(size = 12))
-```
-
-We chose four topics because two topics always dominated in dilution series samples. 
-<!-- When we chose three topics, one of the topics dominated in dilution series sample is also dominated in control sample. Topic 1 is contaminant topic because it's only dominated in control samples. Topic 3 is also a contaminant topic because $\theta$ distribution range is less than .25 in all dilution samples. Topic 2 is real species topic because it is highly dominated in dilution series samples. Topic 4 is mix of mostly real and some contribution from contaminant species. -->
-
-```{r}
-p
-ggsave("./Figures/Zymo_LDA_theta.eps", plot = p, width = 12, height = 16)
+theta.all$Sample_Type = factor(theta.all$Sample_Type)
 ```
 
 
 ### boxplot
+
+topic distirbution in each sample
 ```{r}
 p = ggplot(data = theta.all) + 
   geom_boxplot(aes(x = Sample, y = topic.dis, color = Topic)) + 
-  facet_grid(Topic ~ Group, scales = "free_x")+
+  facet_grid(Topic ~ Sample_Type, scales = "free_x") +
   ylab(bquote(theta[k])) + 
   ggtitle("") + 
   theme(plot.title = element_text(hjust = 0.5, size = 15), 
-    strip.text.y= element_text(size = 12), 
-    strip.text.x = element_text(size = 12))
+    strip.text.y= element_text(size = 8), 
+    strip.text.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.position = "none")
 p
-ggsave("./Figures/Zymo_LDA_theta_col.eps", plot = p, width = 10, height = 6)
+
+ggsave("./Figures/Zymo_LDA_theta_col.eps", plot = p, width = 10, height = 7)
 ```
 
-### ASV distribution in each topic
+
+We chose four topics because two topics always dominated in dilution series samples. 
+<!-- When we chose three topics, one of the topics dominated in dilution series sample is also dominated in control sample. Topic 1 is contaminant topic because it's only dominated in control samples. Topic 3 is also a contaminant topic because $\theta$ distribution range is less than .25 in all dilution samples. Topic 2 is real species topic because it is highly dominated in dilution series samples. Topic 4 is mix of mostly real and some contribution from contaminant species. -->
+
+### ASV cloud in each topic
 ```{r}
 beta = samples$beta
-beta.all = melt(beta)
-colnames(beta.all) = c("Chain", "Topic", "ASV", "ASV.distribution")
-beta.all$Topic = factor(beta.all$Topic)
-levels(beta.all$Topic) = c(paste0("Topic_", seq(1,K)))
-beta.all$ASV = factor(beta.all$ASV)
-levels(beta.all$ASV) = df.ASV$ASV.Genus
-```
-
-
-```{r}
-library(viridis)
-ggheatmap(
-  beta.all %>%
-  group_by(Topic, ASV) %>%
-  summarise(log_median_beta = log(median(ASV.distribution, na.rm = TRUE))) %>%
-  as.data.frame(),
-  id.vars = c("ASV", "Topic"),
-  value.name = "log_median_beta"
-) + ggtitle("ASV distribution in each topic") + 
-  theme(plot.title = element_text(hjust = 0.5, size = 8), axis.text.x = element_text(size = 8), axis.text.y = element_text(size = 12)) + 
-  scale_fill_gradient(low = "white", high = "orange")
-```
-
-
-We used LDA on the standard eight dilution series samples and 10 negative controls. LDA starting with $T=10$ topics on the ZymoBIOMICS data assigned each negative control sample to a different topic. By varying the number of topics, we observed that two topics were consistently assigned to dilution series samples. Thus, we reduced the number of topics to four which showed one clear contaminant topic (Topic 1), two topics dominated by true ASVs (Topic 2 and 4), and a third topic (Topic 3) which was a mixture of true ASVs with low abundance and contaminant ASVs as in Figure \ref{fig10}. 
-
-
-## ASV cloud
-
-```{r}
-beta = samples$beta
+dimnames(beta)[[2]] = c(paste0("Bacterial Community ", seq(1,K)))
 
 tax_tab = tax_table(ps) %>% data.frame()
 tax_tab = mutate(tax_tab, seq.variant = rownames(tax_tab))
@@ -389,12 +307,14 @@ beta.all = melt(beta)
 colnames(beta.all) = c("Chain", "Topic", "ASV", "ASV.distribution")
 beta.all = left_join(beta.all, tax_tab, by = c("ASV"= "seq.variant"))
 beta.all$Topic = factor(beta.all$Topic)
-#levels(beta.all$Topic) = c(paste0("Topic_", seq(1,K)))
 beta.all$ASV = factor(beta.all$ASV)
-#levels(beta.all$ASV) = df.ASV$ASV.Class
+```
 
+compute max of $\beta_{k}$ for each ASV in each topic
 
-max.beta.in.each.asv.all.topics = group_by(beta.all,Topic, Genus) %>% summarise(max_beta = max(ASV.distribution)) %>% top_n(10, max_beta) %>% as.data.frame()
+```{r}
+max.beta.in.each.asv.all.topics = group_by(beta.all, Topic, Genus) %>% summarise(max_beta = max(ASV.distribution)) %>% top_n(10, max_beta) %>% as.data.frame()
+
 
 library(ggwordcloud)
 
@@ -402,9 +322,13 @@ p_cloud = ggplot(max.beta.in.each.asv.all.topics,
                  aes(label = Genus, size = max_beta, color = Genus)) + 
   geom_text_wordcloud() +
   theme_minimal() +
-  scale_size_area(max_size = 18) + 
-  facet_wrap(~ Topic) + theme(strip.text.x = element_text(size = 18, face = "bold"))
+  scale_size_area(max_size = 10) + 
+  facet_wrap(~ Topic) + 
+  theme(strip.text.x = element_text(size = 12, face = "bold"))
 
-ggsave("./Figures/Zymo_LDA_cloud.png", p_cloud, width = 20, height = 15, units = "in", dpi = 300)
+p_cloud
+
+ggsave("./Figures/Zymo_ASV.png", p_cloud, width = 10, height = 7, units = "in", dpi = 300)
 ```
+
 
