@@ -6,7 +6,7 @@ output:
   BiocStyle::html_document
 params:
   K: 4
-  R: 200
+  R: 500
 ---
 
 # Outline
@@ -33,11 +33,6 @@ K = params$K
 K
 iter = params$R
 iter
-```
-
-```{r eval=FALSE}
-pkg <- c("phyloseq", 
-         "dplyr")
 ```
 
 
