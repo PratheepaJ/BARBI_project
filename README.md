@@ -10,5 +10,5 @@ This repository provides R codes for
 - [Zymo_Dada2_pipeline](https://github.com/PratheepaJ/BARBI_project/tree/master/Zymo_Dada2_pipeline)
     - DADA2 pipeline for the standard dilution series of a known microbial community.
 - [decontam_for_all_data](https://github.com/PratheepaJ/BARBI_project/tree/master/decontam_for_all_data)
-    - {\tt decontam} to remove DNA contaminants in the validation cohort and two applications. 
+    - _decontam_ to remove DNA contaminants in the validation cohort and two applications. 
   
