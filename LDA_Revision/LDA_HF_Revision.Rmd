@@ -10,8 +10,7 @@ params:
 ---
 
 # Outline
-
-Metagenomic shotgun sequencing dataset on 200 patients with suspected sepsis (Cheng et al., 2019). Briefly, $n_{1} = 200$ plasma specimens were extracted alongside $n_{2} = 40$ negative controls and sequenced using HiSeq. To account for the batch effect, care was taken to include record information on which specimens were placed in each extraction batch. Sequencing depths ranged between 10 and 70 million reads in plasma specimens and between .3 and 8 million reads in negative controls. Adapter-trimmed, quality-filtered, and human-subtracted reads were Kraken-classified \citep{wood2014} to 1644 species. 
+metagenomics shotgun sequencing data of ten healthy subjects before (three time-points) and after teeth flossing (six to seven time-points.) A total of 90 plasma specimens from ten subjects were extracted alongside five to six negative controls per subject and sequenced using HiSeq.Adapter-trimmed, quality-filtered, and human-subtracted reads were Kraken-classified to 1645 species. 
 
 # Set-up
 
@@ -49,35 +48,25 @@ library(ape)
 
 ## Read phyloseq and exploratory analysis
 
-```{r}
-ps = readRDS("./Data/ps_sirs_updated_may_1_2018.rds")
+```{r }
+ps = readRDS("./Data/pshf.rds")
 ps
 if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
-ps = subset_samples(ps, !(Sample_Type == "Library_Control"))
-mapp = readxl::read_excel("./Data/Pt_and_P.xlsx")
-sample_names(ps)[which(sample_names(ps) %in% mapp$P)] = mapp$Pt
-sample_data(ps)$SampleCode = sample_names(ps)
-
-ps = subset_samples(ps, !(SampleType == "Healthy"))
-ps 
 ```
 
 ## Adding blocks
 ```{r}
-set1 = c("1","2","3","4","11","12")
-set2 = c("5","6","7","8","9","10")
-setP = "P"
-ext.num = sample_data(ps)$Extraction_Number
+set1 = c("FL002","FL003","FL004","FL005")
+set2 = c("FL006","FL007","FL008","FL009","FL010","FL011")
 
-blocks = ifelse(ext.num %in% set1, "Set1", ifelse(ext.num %in% set2, "Set2", "SetP"))
+#the following negative controls are in set 2 only.
+nctrl = c("Water.Keck.1", "Phix.1", "Phix.2", "Water.ctrl.1", "Water.ctrl.2")
 
+ext.num = sample_data(ps)$SubjectName
+blocks = ifelse(ext.num %in% set1, "Set1", "Set2")
 sample_data(ps)$block = blocks
-sample_data(ps)$block = factor(sample_data(ps)$block)
 
-if(dim(otu_table(ps))[1]!=ntaxa(ps)){
-  otu_table(ps) = t(otu_table(ps))
-}
-
+ps = subset_samples(ps,Sample_Type %in% c("Plasma", "Control"))
 ```
 
 Identify the species that are not present in at least one `Sample_Type == Plasma` sample and removed them from the phyloseq object. Label these species as contaminants. 
@@ -96,7 +85,7 @@ ps = prune_taxa(prevTaxaP > 0, ps)
 ps
 ```
 
-We identifed 369 species not in any plasma samples and they are classified as contaminants before using BARBI LDA.
+We identifed 255 species not in any plasma samples and they are classified as contaminants before using BARBI LDA (VB).
   
 See a summary of the `plasma` and `control` samples in each block. 
 
@@ -120,10 +109,10 @@ Select all plasma samples from each block and store as a list of phyloseq object
 ```{r list_of_phyloseq}
 source("psBlockResults.R")
 psBlockResult = psBlockResults(ps, 
-                               sampleTypeVar = "Sample_Type",
-                               caselevels = c("Plasma"),
-                               controllevel="Control",
-                               sampleName = "SampleCode",
+                               sampleTypeVar = "Sample_Type", 
+                               caselevels = c("Plasma"), 
+                               controllevel="Control", 
+                               sampleName = "SampleCode", 
                                blockVar = "block")
 
 psByBlock = psBlockResult[[1]]
@@ -132,7 +121,7 @@ psallzeroInNC = psBlockResult[[3]]
 psPlByBlock = psBlockResult[[4]]
 ```
 
-## LDA 
+### LDA 
 
 Each sample is modeled as having a mixture of topics, with each species drawn from a topic based on mixing proportions.
 
@@ -144,11 +133,11 @@ Each sample is modeled as having a mixture of topics, with each species drawn fr
 f = stan_model(file = "lda.stan")
 ```
 
-For each block, make a stan data
+For each block, make a stan data'
 
 ```{r}
-K = as.list(c(5,4,3)) # number of topics
-stan.data.all.blocks = lapply(as.list(1:3), function(i){
+K = as.list(c(4,3)) # number of topics
+stan.data.all.blocks = lapply(as.list(1:2), function(i){
   y = psByBlock[[i]]
   x = t(get_taxa(y))
   dimnames(x) = NULL
@@ -162,25 +151,24 @@ stan.data.all.blocks = lapply(as.list(1:3), function(i){
 })
 ```
 
-
 ```{r}
 stan.fit.all.blocks = lapply(stan.data.all.blocks, function(u){
   stan_fit = sampling(f, 
                       data = u, 
                       iter = iter, 
                       chains = 2, 
-                      sample_file = "./Results/sample_file_SIRS",
-                      diagnostic_file = "./Results/diagnostic_file_SIRS",
+                      sample_file = "./Results/sample_file_HF",
+                      diagnostic_file = "./Results/diagnostic_file_HF",
                       cores = 2)
   
   return(stan_fit)
 })
 
-saveRDS(stan.fit.all.blocks, file = "./Results/SIRS_LDA.rds")
+saveRDS(stan.fit.all.blocks, file = "./Results/SIRS_HF.rds")
 ```
 
 ```{r}
-stan.fit.all.blocks = readRDS("./Results/SIRS_LDA.rds")
+stan.fit.all.blocks = readRDS("./Results/SIRS_HF.rds")
 ```
 
 ### Extract posterior samples
@@ -192,7 +180,7 @@ samples.all.blocks = lapply(stan.fit.all.blocks, function(x){
 
 ### Posterior distirbution of topic in each sample in each block
 ```{r}
-theta.all.blocks = lapply(as.list(1:3), function(i){
+theta.all.blocks = lapply(as.list(1:2), function(i){
   x = samples.all.blocks[[i]]
   theta = x$theta # chain * sample * topic
   # find theta distirbution of each topic in each sample
@@ -216,13 +204,12 @@ theta.all.blocks = lapply(as.list(1:3), function(i){
 ```
 
 
-
 ### boxplot 
 ```{r}
 
 p.all.blocks = lapply(theta.all.blocks, function(u){
   sel.samples = c(as.character(unique(u$Sample[(u$Sample_Type == "Control")])), 
-                  as.character(unique(u$Sample[(u$Sample_Type == "Plasma")])[c(1:10, 48)]))
+                  as.character(unique(u$Sample[(u$Sample_Type == "Plasma")])[10:19]))
   u = filter(u, Sample %in% sel.samples)
   p = ggplot(data = u) + 
   geom_boxplot(aes(x = Sample, y = topic.dis, color = Topic)) + 
@@ -243,23 +230,17 @@ p.all.blocks = lapply(theta.all.blocks, function(u){
 
 ```{r fig.width=15, fig.height=10}
 p.all.blocks[[1]]
-ggsave("./Figures/SIRS_LDA_theta_set1.eps", plot = p.all.blocks[[1]], width = 9, height = 10)
+ggsave("./Figures/HF_LDA_theta_set1.eps", plot = p.all.blocks[[1]], width = 9, height = 10)
 ```
-
 
 ```{r fig.width=15, fig.height=10}
 p.all.blocks[[2]]
-ggsave("./Figures/SIRS_LDA_theta_set2.eps", plot = p.all.blocks[[2]], width = 9, height = 10)
-```
-
-```{r fig.width=15, fig.height=10}
-p.all.blocks[[3]]
-ggsave("./Figures/SIRS_LDA_theta_set3.eps", plot = p.all.blocks[[3]], width = 9, height = 10)
+ggsave("./Figures/HF_LDA_theta_set2.eps", plot = p.all.blocks[[2]], width = 9, height = 10)
 ```
 
 ### ASV cloud in each topic
 ```{r}
-beta.all.blocks = lapply(as.list(1:3), function(i){
+beta.all.blocks = lapply(as.list(1:2), function(i){
   x = samples.all.blocks[[i]]
   beta = x$beta
   dimnames(beta)[[2]] = c(paste0("Bacterial Community ", seq(1,K[[i]])))
@@ -280,7 +261,7 @@ beta.all.blocks = lapply(as.list(1:3), function(i){
 
 ```{r}
 library(ggwordcloud)
-max.beta.in.each.asv.all.topics.all.blocks = lapply(as.list(1:3), function(i){
+max.beta.in.each.asv.all.topics.all.blocks = lapply(as.list(1:2), function(i){
   max.beta.in.each.asv.all.topics = group_by(beta.all.blocks[[i]], Topic, Species) %>% summarise(max_beta = max(ASV.distribution)) %>% top_n(10, max_beta) %>% as.data.frame()
   
   return(max.beta.in.each.asv.all.topics)
@@ -291,6 +272,7 @@ max.beta.in.each.asv.all.topics.all.blocks = lapply(max.beta.in.each.asv.all.top
   return(x)
 })
 ```
+
 
 ```{r}
 p_cloud_all_blocks = lapply(max.beta.in.each.asv.all.topics.all.blocks, function(x){
@@ -304,23 +286,16 @@ p_cloud_all_blocks = lapply(max.beta.in.each.asv.all.topics.all.blocks, function
 return(p_cloud)
 })
 
-
 ```
 
 ```{r fig.width=15, fig.height=10}
 p_cloud_all_blocks[[1]]
 
-ggsave("./Figures/SIRS_Set1_ASV.png", p_cloud_all_blocks[[1]], width = 15, height = 10, units = "in", dpi = 300)
+ggsave("./Figures/HF_Set1_ASV.png", p_cloud_all_blocks[[1]], width = 15, height = 10, units = "in", dpi = 300)
 ```
 
 ```{r fig.width=15, fig.height=10}
 p_cloud_all_blocks[[2]]
-ggsave("./Figures/SIRS_Set2_ASV.png", p_cloud_all_blocks[[2]], width = 15, height = 10, units = "in", dpi = 300)
+
+ggsave("./Figures/HF_Set2_ASV.png", p_cloud_all_blocks[[2]], width = 15, height = 10, units = "in", dpi = 300)
 ```
-
-```{r fig.width=15, fig.height=10}
-p_cloud_all_blocks[[3]]
-
-ggsave("./Figures/SIRS_Set3_ASV.png", p_cloud_all_blocks[[3]], width = 15, height = 10, units = "in", dpi = 300)
-```
-
