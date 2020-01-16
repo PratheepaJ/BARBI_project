@@ -1,38 +1,55 @@
 ---
-title: "LDA-VB (Variational Bayes) on ED data"
-author: "Pratheepa Jeganathan"
-date: "`r format(Sys.time(), '%B %d, %Y')`"
+title: "LDA on SIRS data"
+author: "Pratheepa Jeganathan, Susan Holmes"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: 
-  html_document:
-    toc: true
+  BiocStyle::html_document
+params:
+  K: 4
+  R: 500
 ---
 
+# Outline
+
+Metagenomic shotgun sequencing dataset on 200 patients with suspected sepsis (Cheng et al., 2019). Briefly, $n_{1} = 200$ plasma specimens were extracted alongside $n_{2} = 40$ negative controls and sequenced using HiSeq. To account for the batch effect, care was taken to include record information on which specimens were placed in each extraction batch. Sequencing depths ranged between 10 and 70 million reads in plasma specimens and between .3 and 8 million reads in negative controls. Adapter-trimmed, quality-filtered, and human-subtracted reads were Kraken-classified \citep{wood2014} to 1644 species. 
+
+# Set-up
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, 
   message = FALSE, 
-  warning = FALSE, 
-  fig.width = 16, 
-  fig.height = 12)
+  warning = FALSE,
+  fig.width = 12,
+  fig.height = 8)
+```
+
+```{r read_arg}
+K = params$K
+K
+iter = params$R
+iter
 ```
 
 Loading packages
 ```{r}
 library(phyloseq)
-library(ggplot2)
-library(magrittr)
 library(dplyr)
-library(reshape2)
+library(magrittr)
 library(rstan)
 library(RColorBrewer)
 library(wesanderson)
-library(ggheatmap)
+library(ggheatmap)# Github repo: #devtools::install_github("jakobbossek/ggheatmap")
+library(reshape2)
+library(DESeq2)
+#library(Rcpp)
+library(ape)
 ```
 
+# Analysis
 
-### Read phyloseq and exploratory analysis
+## Read phyloseq and exploratory analysis
 
-```{r eval=FALSE, include=FALSE}
+```{r}
 ps = readRDS("./Data/ps_sirs_updated_may_1_2018.rds")
 ps
 if(dim(otu_table(ps))[1]!=ntaxa(ps)){otu_table(ps) <- t(otu_table(ps))}
@@ -42,18 +59,17 @@ sample_names(ps)[which(sample_names(ps) %in% mapp$P)] = mapp$Pt
 sample_data(ps)$SampleCode = sample_names(ps)
 
 ps = subset_samples(ps, !(SampleType == "Healthy"))
-saveRDS(ps, "./Data/ps_ED.rds")
+ps 
 ```
 
+## Adding blocks
 ```{r}
-ps = readRDS("./Data/ps_ED.rds")
-
 set1 = c("1","2","3","4","11","12")
 set2 = c("5","6","7","8","9","10")
 setP = "P"
 ext.num = sample_data(ps)$Extraction_Number
 
-blocks = ifelse(ext.num %in% set1, "Set1", ifelse(ext.num %in% set2, "Set2","SetP"))
+blocks = ifelse(ext.num %in% set1, "Set1", ifelse(ext.num %in% set2, "Set2", "SetP"))
 
 sample_data(ps)$block = blocks
 sample_data(ps)$block = factor(sample_data(ps)$block)
@@ -80,7 +96,7 @@ ps = prune_taxa(prevTaxaP > 0, ps)
 ps
 ```
 
-We identifed 369 species not in any plasma samples and they are classified as contaminants before using BARBI LDA (VB).
+We identifed 369 species not in any plasma samples and they are classified as contaminants before using BARBI LDA.
   
 See a summary of the `plasma` and `control` samples in each block. 
 
@@ -89,7 +105,7 @@ table(sample_data(ps)$Sample_Type, sample_data(ps)$block)
 ```
 
 
-###      Prepare the phyloseq object for the Bayesian inference
+## Prepare the phyloseq object for the Bayesian inference
 
 We use Bayesian inference to identify contaminants in each block separately to account for the batch-effects of contamination. 
 
@@ -104,7 +120,11 @@ Select all plasma samples from each block and store as a list of phyloseq object
 ```{r list_of_phyloseq}
 source("psBlockResults.R")
 psBlockResult = psBlockResults(ps, 
-  sampleTypeVar = "Sample_Type", caselevels = c("Plasma"), controllevel="Control", sampleName = "SampleCode", blockVar = "block")
+                               sampleTypeVar = "Sample_Type",
+                               caselevels = c("Plasma"),
+                               controllevel="Control",
+                               sampleName = "SampleCode",
+                               blockVar = "block")
 
 psByBlock = psBlockResult[[1]]
 psNCbyBlock = psBlockResult[[2]]
@@ -112,15 +132,15 @@ psallzeroInNC = psBlockResult[[3]]
 psPlByBlock = psBlockResult[[4]]
 ```
 
-## LDA using VB
+## LDA 
 
 Each sample is modeled as having a mixture of topics, with each species drawn from a topic based on mixing proportions.
 
 
-### LDA on specimen and control samples
+### LDA on plasma and negative control samples
 
 
-```{r eval=FALSE}
+```{r}
 f = stan_model(file = "lda.stan")
 ```
 
@@ -142,31 +162,31 @@ stan.data.all.blocks = lapply(as.list(1:3), function(i){
 })
 ```
 
-Sample from posterior using variational Bayes.
-```{r eval=FALSE}
+
+```{r}
 stan.fit.all.blocks = lapply(stan.data.all.blocks, function(u){
-  stan_fit = vb(f, 
-    data = u, 
-    output_samples = 1000, 
-    eta = 1, 
-    adapt_engaged = FALSE,
-    seed = 234
-)
+  stan_fit = sampling(f, 
+                      data = u, 
+                      iter = iter, 
+                      chains = 2, 
+                      sample_file = "./Results/sample_file_SIRS",
+                      diagnostic_file = "./Results/diagnostic_file_SIRS",
+                      cores = 2)
+  
   return(stan_fit)
 })
 
-
-saveRDS(stan.fit.all.blocks, file = "./Results/stan_fit_all_ED.rds")
+saveRDS(stan.fit.all.blocks, file = "./Results/SIRS_LDA.rds")
 ```
 
 ```{r}
-stan.fit.all.blocks <- readRDS("./Results/stan_fit_all_ED.rds")
+stan.fit.all.blocks = readRDS("./Results/SIRS_LDA.rds")
 ```
 
 ### Extract posterior samples
 ```{r}
-samples.all.blocks <- lapply(stan.fit.all.blocks, function(x){
-  rstan::extract(x)
+samples.all.blocks = lapply(stan.fit.all.blocks, function(x){
+  rstan::extract(x, permuted = TRUE, inc_warmup = FALSE, include = TRUE)
 })
 ```
 
@@ -177,13 +197,19 @@ theta.all.blocks = lapply(as.list(1:3), function(i){
   theta = x$theta # chain * sample * topic
   # find theta distirbution of each topic in each sample
   names(theta) = c("theta", "Sample", "Topic")
+  dimnames(theta)[[2]] = sample_names(psByBlock[[i]])
+  dimnames(theta)[[3]] = c(paste0("Bacterial Community ", seq(1, K[[i]])))
   theta.all = melt(theta)
   colnames(theta.all) = c("Chain", "Sample", "Topic", "topic.dis")
+
   theta.all$Sample = factor(theta.all$Sample)
-  #levels(theta.all$Sample) = sample_names(ps)
   theta.all$Topic = factor(theta.all$Topic)
-  levels(theta.all$Topic) = c(paste0("Topic_", seq(1,K[[i]])))
-  return(theta.all)
+
+  # add control or dilution series
+  sam = sample_data(psByBlock[[i]]) %>% data.frame()
+  sam$unique_names = rownames(sam)
+  theta.all = left_join(theta.all, sam, by =c("Sample"= "unique_names"))
+
 })
 
 for(i in 1:3){

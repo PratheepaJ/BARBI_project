@@ -116,7 +116,7 @@ ps
 
 
 
-### Adding blocks
+## Adding blocks
 
 We have only one block of samples.
 
@@ -183,7 +183,6 @@ psPlByBlock = psBlockResult[[4]]
 ```
 
 ## LDA
-
 
 
 ### LDA on dilution series samples and negative controls
