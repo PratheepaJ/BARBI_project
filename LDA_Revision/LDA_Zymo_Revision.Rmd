@@ -216,17 +216,24 @@ stan.data <- list(K = K,
 
 ```{r}
 t1 = proc.time()
-stan.fit = sampling(f, 
-  data = stan.data, 
-  iter = iter, 
-  chains = 2, 
+stan.fit = sampling(f,
+  data = stan.data,
+  iter = iter,
+  chains = 1,
   sample_file = "./Results/sample_file_Zymo",
   diagnostic_file = "./Results/diagnostic_file_Zymo",
-  cores = 2)
+  cores = 1)
 
 proc.time() - t1
 
 saveRDS(stan.fit, file = "./Results/Zymo_LDA.rds")
+
+# stan.fit = vb(f,
+#   data = stan.data,
+#   output_samples = 100,
+#   eta = 1,
+#   adapt_engaged = FALSE)
+# saveRDS(stan.fit, file = "./Results/Zymo_LDA.rds")
 ```
 
 ```{r}
@@ -307,13 +314,13 @@ beta.all$ASV = factor(beta.all$ASV)
 compute max of $\beta_{k}$ for each ASV in each topic
 
 ```{r}
-max.beta.in.each.asv.all.topics = group_by(beta.all, Topic, Genus) %>% summarise(max_beta = max(ASV.distribution)) %>% top_n(10, max_beta) %>% as.data.frame()
+max.beta.in.each.asv.all.topics = group_by(beta.all, Topic, Family, Genus) %>% summarise(max_beta = max(ASV.distribution)) %>% top_n(10, max_beta) %>% as.data.frame()
 
 
 library(ggwordcloud)
 
 p_cloud = ggplot(max.beta.in.each.asv.all.topics, 
-                 aes(label = Genus, size = max_beta, color = Genus)) + 
+                 aes(label = Genus, size = max_beta, color = Family)) + 
   geom_text_wordcloud() +
   theme_minimal() +
   scale_size_area(max_size = 10) + 
