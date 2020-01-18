@@ -234,6 +234,20 @@ We identified 396 species, not in any plasma samples, and they are considered as
 
 We use BARBI to infer true species in each plasma sample.
 
+```{r eval=FALSE, include=FALSE}
+ps_plasma <- subset_samples(ps, 
+                            Sample_Type %in% c("Plasma"))
+prevTaxaP <- apply(otu_table(ps_plasma), 1, function(x){sum(x>0)})
+
+summary(prevTaxaP)
+
+ps_control <- subset_samples(ps, 
+                            Sample_Type %in% c("Control"))
+prevTaxaC <- apply(otu_table(ps_control), 1, function(x){sum(x>0)})
+
+summary(prevTaxaC )
+```
+
 
 ## Library depth
 
