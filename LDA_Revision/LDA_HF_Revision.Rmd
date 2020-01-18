@@ -235,7 +235,7 @@ ggsave("./Figures/HF_LDA_theta_set1.eps", plot = p.all.blocks[[1]], width = 10, 
 
 ```{r fig.width=15, fig.height=10}
 p.all.blocks[[2]]
-ggsave("./Figures/HF_LDA_theta_set2.eps", plot = p.all.blocks[[2]], width = 9, height = 10)
+ggsave("./Figures/HF_LDA_theta_set2.eps", plot = p.all.blocks[[2]], width = 10, height = 7)
 ```
 
 ### ASV cloud in each topic
@@ -262,7 +262,7 @@ beta.all.blocks = lapply(as.list(1:2), function(i){
 ```{r}
 library(ggwordcloud)
 max.beta.in.each.asv.all.topics.all.blocks = lapply(as.list(1:2), function(i){
-  max.beta.in.each.asv.all.topics = group_by(beta.all.blocks[[i]], Topic, Species) %>% summarise(max_beta = max(ASV.distribution)) %>% top_n(30, max_beta) %>% as.data.frame()
+  max.beta.in.each.asv.all.topics = group_by(beta.all.blocks[[i]], Topic, Phylum, Family, Genus, Species) %>% summarise(max_beta = max(ASV.distribution)) %>% top_n(30, max_beta) %>% as.data.frame()
   
   return(max.beta.in.each.asv.all.topics)
 })
