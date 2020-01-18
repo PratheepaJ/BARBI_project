@@ -186,7 +186,7 @@ theta.all.blocks = lapply(as.list(1:2), function(i){
   # find theta distirbution of each topic in each sample
   names(theta) = c("theta", "Sample", "Topic")
   dimnames(theta)[[2]] = sample_names(psByBlock[[i]])
-  dimnames(theta)[[3]] = c(paste0("Bacterial Community ", seq(1, K[[i]])))
+  dimnames(theta)[[3]] = c(paste0("Topic ", seq(1, K[[i]])))
   theta.all = melt(theta)
   colnames(theta.all) = c("Chain", "Sample", "Topic", "topic.dis")
 
@@ -217,7 +217,7 @@ p.all.blocks = lapply(theta.all.blocks, function(u){
   ylab(bquote(theta[k])) + 
   ggtitle("") + 
   theme(plot.title = element_text(hjust = 0.5, size = 15), 
-    strip.text.y= element_text(size = 8), 
+    strip.text.y= element_text(size = 12), 
     strip.text.x = element_text(size = 12),
     axis.title.y = element_text(size = 12),
     legend.position = "none",
@@ -230,7 +230,7 @@ p.all.blocks = lapply(theta.all.blocks, function(u){
 
 ```{r fig.width=15, fig.height=10}
 p.all.blocks[[1]]
-ggsave("./Figures/HF_LDA_theta_set1.eps", plot = p.all.blocks[[1]], width = 9, height = 10)
+ggsave("./Figures/HF_LDA_theta_set1.eps", plot = p.all.blocks[[1]], width = 10, height = 7)
 ```
 
 ```{r fig.width=15, fig.height=10}
@@ -243,7 +243,7 @@ ggsave("./Figures/HF_LDA_theta_set2.eps", plot = p.all.blocks[[2]], width = 9, h
 beta.all.blocks = lapply(as.list(1:2), function(i){
   x = samples.all.blocks[[i]]
   beta = x$beta
-  dimnames(beta)[[2]] = c(paste0("Bacterial Community ", seq(1,K[[i]])))
+  dimnames(beta)[[2]] = c(paste0("Topic ", seq(1,K[[i]])))
   
   tax_tab = tax_table(psByBlock[[i]]) %>% data.frame()
   tax_tab = mutate(tax_tab, seq.variant = rownames(tax_tab))
@@ -262,7 +262,7 @@ beta.all.blocks = lapply(as.list(1:2), function(i){
 ```{r}
 library(ggwordcloud)
 max.beta.in.each.asv.all.topics.all.blocks = lapply(as.list(1:2), function(i){
-  max.beta.in.each.asv.all.topics = group_by(beta.all.blocks[[i]], Topic, Species) %>% summarise(max_beta = max(ASV.distribution)) %>% top_n(10, max_beta) %>% as.data.frame()
+  max.beta.in.each.asv.all.topics = group_by(beta.all.blocks[[i]], Topic, Species) %>% summarise(max_beta = max(ASV.distribution)) %>% top_n(30, max_beta) %>% as.data.frame()
   
   return(max.beta.in.each.asv.all.topics)
 })
@@ -279,7 +279,7 @@ p_cloud_all_blocks = lapply(max.beta.in.each.asv.all.topics.all.blocks, function
   p_cloud = ggplot(x, aes(label = Species, size = max_beta, color = Species)) + 
   geom_text_wordcloud() +
   theme_minimal() +
-  scale_size_area(max_size = 10) + 
+  scale_size_area(max_size = 12) + 
   facet_wrap(~ Topic) + 
   theme(strip.text.x = element_text(size = 12, face = "bold"))
 
@@ -291,12 +291,12 @@ return(p_cloud)
 ```{r fig.width=15, fig.height=10}
 p_cloud_all_blocks[[1]]
 
-ggsave("./Figures/HF_Set1_ASV.png", p_cloud_all_blocks[[1]], width = 15, height = 10, units = "in", dpi = 300)
+ggsave("./Figures/HF_Set1_ASV.png", p_cloud_all_blocks[[1]], width = 12, height = 10, units = "in", dpi = 300)
 ```
 
 
 ```{r fig.width=15, fig.height=10}
 p_cloud_all_blocks[[2]]
 
-ggsave("./Figures/HF_Set2_ASV.png", p_cloud_all_blocks[[2]], width = 15, height = 10, units = "in", dpi = 300)
+ggsave("./Figures/HF_Set2_ASV.png", p_cloud_all_blocks[[2]], width = 12, height = 10, units = "in", dpi = 300)
 ```
