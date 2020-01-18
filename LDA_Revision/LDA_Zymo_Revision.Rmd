@@ -73,7 +73,7 @@ sample_names(ps) = as.character(sample_data(ps)$Name)
 ```
 
 ## Remove unequal library size depth effect
-```{r eval=FALSE, include=FALSE}
+```{r}
 ot = otu_table(ps) %>% data.frame()
 geo_mean = function(x) {
         if(all(x == 0)){
@@ -97,23 +97,6 @@ colnames(ot) = sample_names(ps)
 ps = phyloseq(otu_table(ot, taxa_are_rows = TRUE), sample_data(ps), tax_table(ps))
 ps
 ```
-
-<!-- ## Store sequence variants, ASVs, ASV.genus, ASV.genus.species -->
-<!-- ```{r} -->
-<!-- ASV = as.character(paste0("ASV_", seq(1,ntaxa(ps)))) -->
-
-<!-- ASV.Genus = paste0("ASV_", seq(1,ntaxa(ps)), "_", as.character(tax_table(ps)[,6])) -->
-
-<!-- ASV.Genus.Species = paste0(ASV, "_", as.character(tax_table(ps)[,6]), "_", as.character(tax_table(ps)[,7])) -->
-
-<!-- df.ASV = data.frame(seq.variant = taxa_names(ps), ASV = ASV, ASV.Genus = ASV.Genus, ASV.Genus.Species = ASV.Genus.Species) -->
-<!-- ``` -->
-
-<!-- ## Assign taxa names -->
-<!-- ```{r } -->
-<!-- taxa_names(ps) = df.ASV$ASV.Genus.Species -->
-<!-- ``` -->
-
 
 
 ## Adding blocks
@@ -253,7 +236,7 @@ theta = samples$theta # chain * sample * topic
 # find theta distirbution of each topic in each sample
 names(theta) = c("theta", "Sample", "Topic")
 dimnames(theta)[[2]] = sample_names(ps)
-dimnames(theta)[[3]] = c(paste0("Bacterial Community ", seq(1,K)))
+dimnames(theta)[[3]] = c(paste0("Topic ", seq(1,K)))
 
 theta.all = melt(theta)
 colnames(theta.all) = c("Chain", "Sample", "Topic", "topic.dis")
@@ -298,7 +281,7 @@ We chose four topics because two topics always dominated in dilution series samp
 ### ASV cloud in each topic
 ```{r}
 beta = samples$beta
-dimnames(beta)[[2]] = c(paste0("Bacterial Community ", seq(1,K)))
+dimnames(beta)[[2]] = c(paste0("Topic ", seq(1,K)))
 
 tax_tab = tax_table(ps) %>% data.frame()
 tax_tab = mutate(tax_tab, seq.variant = rownames(tax_tab))
@@ -323,7 +306,7 @@ p_cloud = ggplot(max.beta.in.each.asv.all.topics,
                  aes(label = Genus, size = max_beta, color = Family)) + 
   geom_text_wordcloud() +
   theme_minimal() +
-  scale_size_area(max_size = 10) + 
+  scale_size_area(max_size = 11) + 
   facet_wrap(~ Topic) + 
   theme(strip.text.x = element_text(size = 12, face = "bold"))
 

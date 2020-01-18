@@ -506,7 +506,7 @@ burnIn <- 5000
 cov.pro <- .95
 mak_tab <- FALSE # Save tables or print tables 
 
-# con_int_specimen_mar_post_true_intensities <- readRDS("./con_int_specimen_mar_post_true_intensities_vignettes.rds")
+# con_int_specimen_mar_post_true_intensities <- readRDS("./Results/con_int_specimen_mar_post_true_intensities_Zymo.rds")
 
 con_int_specimen <- con_int_specimen_mar_post_true_intensities[[1]]
 mar_post_true_intensities <- con_int_specimen_mar_post_true_intensities[[2]]
@@ -662,7 +662,7 @@ cov.pro <- .95
 
 num_blks <- length(psByBlock)
 
-# con_int_specimen_mar_post_true_intensities <- readRDS("./con_int_specimen_mar_post_true_intensities_vignettes.rds")
+# con_int_specimen_mar_post_true_intensities <- readRDS("./Results/con_int_specimen_mar_post_true_intensities_Zymo.rds")
 
 con_int_specimen <- con_int_specimen_mar_post_true_intensities[[1]]
 mar_post_true_intensities <- con_int_specimen_mar_post_true_intensities[[2]]
@@ -717,7 +717,7 @@ for(j in 1: length(sample.names)){
       ggtitle(desired.sample.name)+
       theme(plot.title = element_text(hjust = 0.5),
             legend.title=element_blank(), 
-            strip.text.x = element_text(size=5),
+            strip.text.x = element_text(size=10),
             strip.background = element_blank(), 
             panel.grid = element_blank(), 
             panel.background = element_blank()) + 
@@ -727,6 +727,8 @@ for(j in 1: length(sample.names)){
     print(p)
     # fileN <- paste0("./Figures/", desired.sample.name,"_hist",".eps")
     # ggsave(fileN, plot = p, width = 10, height = 5, device = "eps")
+    
+    # ggsave("./Figures/Standard_Dilution_1_1_histogram.eps", p, width = 12, height = 5, units = "in", dpi = 300)
 }
 
 ```

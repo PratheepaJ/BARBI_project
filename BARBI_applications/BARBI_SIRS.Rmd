@@ -562,6 +562,7 @@ for(j in 1: length(sample.names)){
     tax_interested_ind <- which(as.character(taxa_names(psPlByBlock[[blk]])) %in% tax_interested)
     tax_names <- taxa_names(psPlByBlock[[blk]])[tax_interested_ind]
     tax_names <- df.ASV$ASV.Genus[which(as.character(df.ASV$seq.variant) %in%  tax_names)] %>% as.character()
+    # tax_names <- substring(df.ASV$seq.variant[which(as.character(df.ASV$seq.variant) %in%  tax_names)] %>% as.character(), 4)# used for Pt_113 histogram
     
     taxa.post <- mar_post_true_intensities_blk[[desired.sample.index]]
     
@@ -591,13 +592,13 @@ for(j in 1: length(sample.names)){
     
     p <- ggplot(bg_sig_long, aes(x= Reads))+
       geom_density(aes(y = ..scaled.., fill = group, color = group)) +
-      facet_wrap(~Taxa,scales = "free")+
+      facet_wrap(~Taxa, scales = "free")+
       scale_fill_manual(values=c("blue","brown")) +
       scale_color_manual(values=c("blue","brown")) +
       ggtitle(desired.sample.name)+
       theme(plot.title = element_text(hjust = 0.5),
             legend.title=element_blank(), 
-            strip.text.x = element_text(size=5),
+            strip.text.x = element_text(size=11),
             strip.background = element_blank(), 
             panel.grid = element_blank(), 
             panel.background = element_blank()) + 
@@ -606,6 +607,7 @@ for(j in 1: length(sample.names)){
     
     print(p)
 
+    # ggsave("./Figures/block_1_Pt_113_histogram.eps", p, width = 12, height = 5, units = "in", dpi = 300)
 }
 
 ```
@@ -664,7 +666,7 @@ for(j in 1: length(sample.names)){
       ggtitle(desired.sample.name)+
       theme(plot.title = element_text(hjust = 0.5),
             legend.title=element_blank(), 
-            strip.text.x = element_text(size=5),
+            strip.text.x = element_text(size=11),
             strip.background = element_blank(), 
             panel.grid = element_blank(), 
             panel.background = element_blank()) + 
@@ -729,7 +731,7 @@ for(j in 1: length(sample.names)){
       ggtitle(desired.sample.name)+
       theme(plot.title = element_text(hjust = 0.5),
             legend.title=element_blank(), 
-            strip.text.x = element_text(size=5),
+            strip.text.x = element_text(size=11),
             strip.background = element_blank(), 
             panel.grid = element_blank(), 
             panel.background = element_blank()) + 

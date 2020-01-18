@@ -1,5 +1,5 @@
 ---
-title: "LDA on SIRS data"
+title: "LDA on Healthy Flossing data"
 author: "Pratheepa Jeganathan, Susan Holmes"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: 
@@ -136,7 +136,7 @@ f = stan_model(file = "lda.stan")
 For each block, make a stan data'
 
 ```{r}
-K = as.list(c(5,5)) # number of topics
+K = as.list(c(4,3)) # number of topics
 stan.data.all.blocks = lapply(as.list(1:2), function(i){
   y = psByBlock[[i]]
   x = t(get_taxa(y))
@@ -156,10 +156,10 @@ stan.fit.all.blocks = lapply(stan.data.all.blocks, function(u){
   stan_fit = sampling(f, 
                       data = u, 
                       iter = iter, 
-                      chains = 2, 
+                      chains = 1, 
                       sample_file = "./Results/sample_file_HF",
                       diagnostic_file = "./Results/diagnostic_file_HF",
-                      cores = 2)
+                      cores = 1)
   
   return(stan_fit)
 })

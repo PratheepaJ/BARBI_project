@@ -168,10 +168,10 @@ stan.fit.all.blocks = lapply(stan.data.all.blocks, function(u){
   stan_fit = sampling(f, 
                       data = u, 
                       iter = iter, 
-                      chains = 2, 
+                      chains = 1, 
                       sample_file = "./Results/sample_file_SIRS",
                       diagnostic_file = "./Results/diagnostic_file_SIRS",
-                      cores = 2)
+                      cores = 1)
   
   return(stan_fit)
 })
