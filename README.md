@@ -2,11 +2,11 @@
 
 This repository provides R codes for 
 
-- [Zymo_Dada2_pipeline](https://github.com/PratheepaJ/BARBI_project/tree/master/Zymo_Dada2_pipeline)
+- [DADA2 pipeline for Zymo data](https://github.com/PratheepaJ/BARBI_project/tree/master/Zymo_Dada2_pipeline)
     - DADA2 pipeline to get a phyloseq object from raw sequences of the standard ZymoBIOMICS microbial community.
     
-- [BARBI_applications](https://github.com/PratheepaJ/BARBI_project/tree/master/BARBI_applications)
-    - BARBI validation on the standard dilution series of a known microbial community.
+- BARBI
+    - [BARBI validation on the standard dilution series of a known microbial community](https://github.com/PratheepaJ/BARBI_project/blob/master/BARBI_applications/BARBI_Zymo.Rmd).
     - BARBI application on the low biomass plasma specimens from patients with suspected sepsis.
     - BARBI application on the low biomass plasma specimens from healthy subjects undergoing mucosal disturbance.
     
