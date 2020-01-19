@@ -308,7 +308,7 @@ p_cloud_all_blocks = lapply(max.beta.in.each.asv.all.topics.all.blocks, function
   p_cloud = ggplot(x, aes(label = Species, size = max_beta, color = Species)) + 
   geom_text_wordcloud() +
   theme_minimal() +
-  scale_size_area(max_size = 12) + 
+  scale_size_area(max_size = 14) + 
   facet_wrap(~ Topic) + 
   theme(strip.text.x = element_text(size = 12, face = "bold"))
 
@@ -321,7 +321,7 @@ return(p_cloud)
 ```{r fig.width=15, fig.height=10}
 p_cloud_all_blocks[[1]]
 
-ggsave("./Figures/SIRS_Set1_ASV.png", p_cloud_all_blocks[[1]], width = 20, height = 9, units = "in", dpi = 300)
+ggsave("./Figures/SIRS_Set1_ASV.png", p_cloud_all_blocks[[1]], width = 22, height = 10, units = "in", dpi = 300)
 ```
 
 ```{r fig.width=15, fig.height=10}
